@@ -12,21 +12,74 @@ start on the basis of these examples alone.
 This was a bounded repository/readme/test-document scan on 2026-09-26, not an
 exhaustive library or security audit.
 
+## Potential funding-boundary simplification
+
+The Token-2022 ElGamal ciphertext already contains a hiding Pedersen
+commitment. In SDK 7.0.1 its commitment component is `C = a*G + r*H`, and its
+decryption handle is `D = r*PK`. The low/high ciphertext combination helper
+combines both ciphertext components and their Pedersen openings with the same
+16-bit shift. A new [host test](src/lib.rs) confirms that the combined pair
+equals a full-amount ciphertext made with the combined opening. This is SDK
+algebra evidence only; it does not prove a live transfer or a ZK link.
+
+There may be a simpler funding boundary than a second, independent
+amount-commitment hash:
+
+1. Let the bidder pre-register the auction/bid identity, fixed bond, and a
+   claim-secret hash. Do not put the amount in public instruction data.
+2. Make `fund_bid` CPI to Token-2022's confidential `Transfer`, passing the
+   low/high auditor ciphertext pair and proof-context state accounts.
+3. Token-2022's transfer processor checks that the supplied auditor pair
+   equals the auditor ciphertext pair extracted from the verified transfer
+   proof context. Its proof-extraction API supports proof-context state
+   accounts when the instruction offset is zero.
+4. Only after the CPI succeeds, store those exact ciphertext bytes in the
+   funded-bid record/Merkle leaf. The pair itself is then the amount
+   commitment; auction ID, bidder, bond, and claim-secret hash remain separate
+   fields in the domain-separated record.
+
+This could remove a separate funding-time proof that equates a Poseidon amount
+commitment with the Token-2022 ciphertext: the auction program would store the
+same ciphertext pair it just asked Token-2022 to accept. It changes the
+commitment schema and timing; it is not a drop-in implementation of the
+current "one commitment binds every field" design. It also does not hide the
+public link between the bidder's bid record and its ciphertext, nor does it
+create a link from that record to a later claim note.
+
+The claim proof still has to show that a hidden amount/opening is consistent
+with a ciphertext pair inside the funded-bid root, that the note value is
+`floor(a_i * Y / Q)`, and that the nullifier is tied to the precommitted secret.
+It must hide the source leaf. The claim proof system, threshold DKG, and vault
+custody remain separate blockers. The CPI and proof-context path itself has not
+been exercised in ProgramTest or a live Token-2022 transfer.
+
+Sources:
+
+- [ElGamal ciphertext representation, SDK 7.0.1](https://docs.rs/solana-zk-sdk/7.0.1/src/solana_zk_sdk/encryption/elgamal.rs.html)
+- [Pedersen commitment representation, SDK 7.0.1](https://docs.rs/solana-zk-sdk/7.0.1/src/solana_zk_sdk/encryption/pedersen.rs.html)
+- [Low/high ciphertext and opening combination, proof-generation 0.6.1](https://docs.rs/spl-token-confidential-transfer-proof-generation/0.6.1/src/spl_token_confidential_transfer_proof_generation/lib.rs.html)
+- [Token-2022 confidential-transfer processor, 9.0.0](https://docs.rs/spl-token-2022/9.0.0/src/spl_token_2022/extension/confidential_transfer/processor.rs.html)
+- [Proof-context account extraction, proof-extraction 0.5.1](https://docs.rs/spl-token-confidential-transfer-proof-extraction/0.5.1/src/spl_token_confidential_transfer_proof_extraction/instruction.rs.html)
+
 ## Required relation
 
-For each of at most eight bids, a client-generated proof must bind the same
-bounded amount `a_i` to:
+For each of at most eight bids, the protocol must ultimately establish that
+the same bounded amount `a_i` is:
 
 - the bidder-bound, domain-separated auction commitment;
 - the low/high Token-2022 auditor ciphertext pair;
 - the accepted confidential-transfer proof context and vault/mint; and
-- the claim/nullifier secret used later to register one private output note.
+- the claim/nullifier secret committed in the bid record and used to register
+  one private output note.
 
-Verifying a Token-2022 transfer proof and a separate commitment proof is not
-enough; the proofs must establish equality of the hidden amount. The later
-claim proof must establish `v_i = floor(a_i * Y / Q)` without revealing the
-bidder, bid index, or note leaf. See the fixed-eight proof contract in
-`DARK_DBC_REDESIGN.md`.
+With a separate amount commitment, a client proof must establish equality
+between that commitment and the accepted ciphertext. With the CPI alternative
+above, the successful Token-2022 CPI can bind the stored ciphertext to the
+accepted transfer, but a later client claim proof must still bind its hidden
+amount to that ciphertext and establish `v_i = floor(a_i * Y / Q)` without
+revealing the bidder, bid index, or note leaf. Verifying a Token-2022 transfer
+proof and an unrelated claim proof is not enough. See the fixed-eight proof
+contract in `DARK_DBC_REDESIGN.md`.
 
 ## Candidates inspected
 
