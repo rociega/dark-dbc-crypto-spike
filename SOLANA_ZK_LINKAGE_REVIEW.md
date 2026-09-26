@@ -38,11 +38,15 @@ amount-commitment hash:
    commitment; auction ID, bidder, bond, and claim-secret hash remain separate
    fields in the domain-separated record.
 
-The lightweight harness now tests only instruction construction:
-`inner_transfer` places the exact auditor ciphertext bytes in its data, forwards
-the three proof-context state accounts, and encodes zero offsets. It does not
-execute the CPI or validate those proof contexts. See the
-[builder test](token-2022-processor-test/src/lib.rs).
+The lightweight harness tests construction and host-side proof-context
+extraction. One test confirms `inner_transfer` places the exact auditor
+ciphertext bytes in its data, forwards all three context accounts, and encodes
+zero offsets. Another generates and locally verifies SDK proof data, places
+only its contexts into synthetic in-memory accounts, invokes Token-2022's
+`verify_transfer_proof` helper, and confirms the exact auditor ciphertexts are
+extracted. These tests do not execute the proof program, `process_transfer`, a
+CPI, or the Solana runtime, so they do not establish that a live transfer
+accepts the context. See the [harness tests](token-2022-processor-test/src/lib.rs).
 
 This could remove a separate funding-time proof that equates a Poseidon amount
 commitment with the Token-2022 ciphertext: the auction program would store the
