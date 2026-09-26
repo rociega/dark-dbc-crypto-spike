@@ -34,7 +34,10 @@ verified SDK proof data. The fixture seeds the source account's starting
 encrypted balance; changing one byte in either the low or high auditor
 ciphertext is rejected before either account changes, while the exact
 proof-context pair is accepted and the expected source and destination
-ciphertext state is written.
+ciphertext state is written. It then processes `ApplyPendingBalance` and checks
+that the destination's available ciphertext equals full-value encryption with
+the combined opening, pending ciphertexts are cleared, and its public token
+amount remains zero.
 
 These are not ProgramTest: they do not validate real runtime sysvar loading,
 system-account creation, proof-program execution, an actual CPI, or a live
