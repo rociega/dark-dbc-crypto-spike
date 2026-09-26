@@ -7,10 +7,13 @@ key encoding, deterministic 2-of-3 Shamir arithmetic, candidate masked-inversion
 arithmetic, test-only Chaum-Pedersen proofs for aggregate decryption shares,
 aggregate ciphertext decryption, and bounded discrete-log recovery.
 
-An in-process Token-2022 ProgramTest is also included. It initializes a
-confidential-transfer mint and reads back the exact auditor-key bytes. The
-fixture key comes from a known test scalar; it is not a DKG. This test does not
-execute a confidential transfer or validate its proof-context flow.
+The separate `token-2022-program-test` harness initializes a
+confidential-transfer mint in Solana ProgramTest and reads back the exact
+auditor-key bytes. Its fixture key comes from a known test scalar; it is not a
+DKG. This test does not execute a confidential transfer or validate its
+proof-context flow. It is isolated from the default host-side suite because the
+native Solana runtime exceeds this workspace's memory limit during compilation;
+the test remains unverified until it completes on a larger runner.
 
 The masked-inversion test is a centrally simulated arithmetic transcript, not
 an MPC security test or DKG. The DLEQ test uses fixed nonces and does not
@@ -19,7 +22,8 @@ harness does not implement the custom per-bid ZK commitment link, Token-2022
 CPI, confidential-vault custody, Anchor, or DBC settlement. Passing tests do
 not prove those blockers are solved.
 
-The test dependency versions are pinned in `Cargo.toml` and `Cargo.lock`.
+The host-side dependency versions are pinned in `Cargo.toml` and `Cargo.lock`;
+the isolated ProgramTest dependencies have their own manifest and lockfile.
 Token-2022 9.x uses Solana 2.x program types, so the in-process runtime is
 version-aligned to Solana 2.3.13. The host proof-generation crate uses the
 newer ElGamal SDK; the integration fixture converts the encoded public key
@@ -35,9 +39,19 @@ distributed-inversion/DKG remains the next cryptographic gate. The ordinary
 threshold-decryption fixture still uses the full test secret to construct its
 key.
 
+Verification status as of 2026-09-26: the default host-side suite passes 6/6
+tests and `protocol-spike` passes 10/10. Formatting checks pass for all three
+manifests; Clippy passes for the root and `protocol-spike` crates. The separate
+ProgramTest build was attempted serially with debug info disabled and as a
+metadata-only check, but the operating system killed `rustc` while compiling
+`libsecp256k1` before the test ran. Auditor-key storage therefore remains
+unverified.
+
 Run:
 
 ```sh
 cargo test
 cargo clippy --all-targets -- -D warnings
+cargo test --manifest-path protocol-spike/Cargo.toml
+cargo test --manifest-path token-2022-program-test/Cargo.toml
 ```
