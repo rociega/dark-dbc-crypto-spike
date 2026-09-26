@@ -1,10 +1,11 @@
-//! Lightweight Token-2022 processor and CPI-instruction-builder checks.
+//! Lightweight Token-2022 processor, context-extraction, and CPI-builder checks.
 //!
 //! The mint test invokes the Token-2022 processor with in-memory AccountInfo
-//! values and a host Rent syscall stub. The transfer test only inspects the
-//! CPI-compatible instruction builder. Neither executes the native Solana
-//! ProgramTest runtime, system-account creation, an actual CPI, or a
-//! confidential transfer.
+//! values and a host Rent syscall stub. Other tests inspect the CPI-compatible
+//! instruction builder and call the transfer proof-context extractor with
+//! in-memory context accounts generated from locally verified SDK proof data.
+//! None executes the native Solana ProgramTest runtime, the proof program, an
+//! actual CPI, or a confidential transfer.
 
 #[cfg(test)]
 mod tests {
@@ -15,8 +16,22 @@ mod tests {
     use solana_sysvar::program_stubs::{self, SyscallStubs};
     use solana_zk_sdk::encryption::elgamal::{ElGamalPubkey, ElGamalSecretKey};
     use solana_zk_sdk_token::encryption::{
-        elgamal::{ElGamalPubkey as TokenElGamalPubkey, ElGamalSecretKey as TokenElGamalSecretKey},
+        elgamal::{
+            ElGamalKeypair as TokenElGamalKeypair, ElGamalPubkey as TokenElGamalPubkey,
+            ElGamalSecretKey as TokenElGamalSecretKey,
+        },
+        grouped_elgamal::GroupedElGamal,
+        pedersen::{Pedersen, PedersenOpening},
         pod::elgamal::{PodElGamalCiphertext, PodElGamalPubkey as TokenPodElGamalPubkey},
+    };
+    use solana_zk_sdk_token::zk_elgamal_proof_program::{
+        proof_data::{
+            BatchedGroupedCiphertext3HandlesValidityProofContext,
+            BatchedGroupedCiphertext3HandlesValidityProofData, BatchedRangeProofContext,
+            BatchedRangeProofU128Data, CiphertextCommitmentEqualityProofContext,
+            CiphertextCommitmentEqualityProofData, ZkProofData,
+        },
+        state::ProofContextState,
     };
     use spl_token_2022::extension::confidential_transfer::{
         DecryptableBalance, instruction::TransferInstructionData,
@@ -188,5 +203,190 @@ mod tests {
             0
         );
         assert_eq!(transfer_data.range_proof_instruction_offset, 0);
+    }
+
+    #[test]
+    fn token_2022_extracts_auditor_ciphertexts_from_context_state_accounts() {
+        let source_keypair =
+            TokenElGamalKeypair::new(TokenElGamalSecretKey::from(Scalar::from(11_111u64)));
+        let destination_keypair =
+            TokenElGamalKeypair::new(TokenElGamalSecretKey::from(Scalar::from(22_222u64)));
+        let auditor_keypair =
+            TokenElGamalKeypair::new(TokenElGamalSecretKey::from(Scalar::from(33_333u64)));
+
+        let new_source_balance = 9_876u64;
+        let new_source_opening = PedersenOpening::new(Scalar::from(44_444u64));
+        let new_source_ciphertext = source_keypair
+            .pubkey()
+            .encrypt_with_u64(new_source_balance, &new_source_opening);
+        let equality_proof = CiphertextCommitmentEqualityProofData::new(
+            &source_keypair,
+            &new_source_ciphertext,
+            &new_source_ciphertext.commitment,
+            &new_source_opening,
+            new_source_balance,
+        )
+        .expect("generate source-balance equality proof");
+
+        let amount_lo = 0x1234u64;
+        let amount_hi = 0x5678u64;
+        let opening_lo = PedersenOpening::new(Scalar::from(55_555u64));
+        let opening_hi = PedersenOpening::new(Scalar::from(66_666u64));
+        let grouped_ciphertext_lo = GroupedElGamal::<3>::encrypt_with(
+            [
+                source_keypair.pubkey(),
+                destination_keypair.pubkey(),
+                auditor_keypair.pubkey(),
+            ],
+            amount_lo,
+            &opening_lo,
+        );
+        let grouped_ciphertext_hi = GroupedElGamal::<3>::encrypt_with(
+            [
+                source_keypair.pubkey(),
+                destination_keypair.pubkey(),
+                auditor_keypair.pubkey(),
+            ],
+            amount_hi,
+            &opening_hi,
+        );
+        let validity_proof = BatchedGroupedCiphertext3HandlesValidityProofData::new(
+            source_keypair.pubkey(),
+            destination_keypair.pubkey(),
+            auditor_keypair.pubkey(),
+            &grouped_ciphertext_lo,
+            &grouped_ciphertext_hi,
+            amount_lo,
+            amount_hi,
+            &opening_lo,
+            &opening_hi,
+        )
+        .expect("generate grouped transfer-ciphertext validity proof");
+
+        let padding_opening = PedersenOpening::new(Scalar::from(77_777u64));
+        let padding_commitment = Pedersen::with(0u64, &padding_opening);
+        let range_proof = BatchedRangeProofU128Data::new(
+            vec![
+                &new_source_ciphertext.commitment,
+                &grouped_ciphertext_lo.commitment,
+                &grouped_ciphertext_hi.commitment,
+                &padding_commitment,
+            ],
+            vec![new_source_balance, amount_lo, amount_hi, 0],
+            vec![64, 16, 32, 16],
+            vec![
+                &new_source_opening,
+                &opening_lo,
+                &opening_hi,
+                &padding_opening,
+            ],
+        )
+        .expect("generate bounded transfer-amount range proof");
+
+        equality_proof
+            .verify_proof()
+            .expect("equality proof fixture must verify");
+        validity_proof
+            .verify_proof()
+            .expect("ciphertext-validity proof fixture must verify");
+        range_proof
+            .verify_proof()
+            .expect("range proof fixture must verify");
+
+        let context_authority = Pubkey::new_unique();
+        let equality_context_key = Pubkey::new_unique();
+        let validity_context_key = Pubkey::new_unique();
+        let range_context_key = Pubkey::new_unique();
+        let proof_program_id = solana_zk_sdk_token::zk_elgamal_proof_program::id();
+
+        let mut equality_lamports = 1;
+        let mut equality_data =
+            ProofContextState::<CiphertextCommitmentEqualityProofContext>::encode(
+                &context_authority,
+                CiphertextCommitmentEqualityProofData::PROOF_TYPE,
+                equality_proof.context_data(),
+            );
+        let equality_account = AccountInfo::new(
+            &equality_context_key,
+            false,
+            false,
+            &mut equality_lamports,
+            &mut equality_data,
+            &proof_program_id,
+            false,
+            0,
+        );
+
+        let mut validity_lamports = 1;
+        let mut validity_data =
+            ProofContextState::<BatchedGroupedCiphertext3HandlesValidityProofContext>::encode(
+                &context_authority,
+                BatchedGroupedCiphertext3HandlesValidityProofData::PROOF_TYPE,
+                validity_proof.context_data(),
+            );
+        let validity_account = AccountInfo::new(
+            &validity_context_key,
+            false,
+            false,
+            &mut validity_lamports,
+            &mut validity_data,
+            &proof_program_id,
+            false,
+            0,
+        );
+
+        let mut range_lamports = 1;
+        let mut range_data = ProofContextState::<BatchedRangeProofContext>::encode(
+            &context_authority,
+            BatchedRangeProofU128Data::PROOF_TYPE,
+            range_proof.context_data(),
+        );
+        let range_account = AccountInfo::new(
+            &range_context_key,
+            false,
+            false,
+            &mut range_lamports,
+            &mut range_data,
+            &proof_program_id,
+            false,
+            0,
+        );
+
+        let context_accounts = [equality_account, validity_account, range_account];
+        let mut context_account_iter = context_accounts.iter();
+        let transfer_context =
+            spl_token_2022::extension::confidential_transfer::verify_proof::verify_transfer_proof(
+                &mut context_account_iter,
+                0,
+                0,
+                0,
+            )
+            .expect("Token-2022 should extract consistent proof contexts");
+
+        let auditor_ciphertext_lo: PodElGamalCiphertext = grouped_ciphertext_lo
+            .to_elgamal_ciphertext(2)
+            .unwrap()
+            .into();
+        let auditor_ciphertext_hi: PodElGamalCiphertext = grouped_ciphertext_hi
+            .to_elgamal_ciphertext(2)
+            .unwrap()
+            .into();
+        assert_eq!(
+            transfer_context
+                .ciphertext_lo
+                .try_extract_ciphertext(2)
+                .unwrap(),
+            auditor_ciphertext_lo
+        );
+        assert_eq!(
+            transfer_context
+                .ciphertext_hi
+                .try_extract_ciphertext(2)
+                .unwrap(),
+            auditor_ciphertext_hi
+        );
+        let auditor_pubkey: TokenPodElGamalPubkey = (*auditor_keypair.pubkey()).into();
+        assert_eq!(transfer_context.transfer_pubkeys.auditor, auditor_pubkey);
+        assert_eq!(context_account_iter.count(), 0);
     }
 }
