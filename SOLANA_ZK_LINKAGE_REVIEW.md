@@ -38,6 +38,12 @@ amount-commitment hash:
    commitment; auction ID, bidder, bond, and claim-secret hash remain separate
    fields in the domain-separated record.
 
+The lightweight harness now tests only instruction construction:
+`inner_transfer` places the exact auditor ciphertext bytes in its data, forwards
+the three proof-context state accounts, and encodes zero offsets. It does not
+execute the CPI or validate those proof contexts. See the
+[builder test](token-2022-processor-test/src/lib.rs).
+
 This could remove a separate funding-time proof that equates a Poseidon amount
 commitment with the Token-2022 ciphertext: the auction program would store the
 same ciphertext pair it just asked Token-2022 to accept. It changes the
@@ -51,7 +57,7 @@ with a ciphertext pair inside the funded-bid root, that the note value is
 `floor(a_i * Y / Q)`, and that the nullifier is tied to the precommitted secret.
 It must hide the source leaf. The claim proof system, threshold DKG, and vault
 custody remain separate blockers. The CPI and proof-context path itself has not
-been exercised in ProgramTest or a live Token-2022 transfer.
+been executed in ProgramTest or a live Token-2022 transfer.
 
 Sources:
 
@@ -63,14 +69,15 @@ Sources:
 
 ## Required relation
 
-For each of at most eight bids, the protocol must ultimately establish that
-the same bounded amount `a_i` is:
+For each of at most eight accepted bids, the protocol must establish that:
 
-- the bidder-bound, domain-separated auction commitment;
-- the low/high Token-2022 auditor ciphertext pair;
-- the accepted confidential-transfer proof context and vault/mint; and
-- the claim/nullifier secret committed in the bid record and used to register
-  one private output note.
+- the stored low/high ciphertext pair is the exact auditor pair accepted by
+  Token-2022 for that mint and vault transfer;
+- a bounded amount `a_i` is encrypted in that pair;
+- the funded record is bound to the auction/bid identity and precommitted
+  claim-secret hash; and
+- the output note value is `floor(a_i * Y / Q)` and its nullifier is bound to
+  that secret.
 
 With a separate amount commitment, a client proof must establish equality
 between that commitment and the accepted ciphertext. With the CPI alternative
