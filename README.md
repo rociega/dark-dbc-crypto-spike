@@ -31,9 +31,10 @@ execute the proof program. A fourth directly invokes Token-2022's
 `Processor::process` on a confidential-transfer instruction using in-memory
 token accounts and synthetic proof-context accounts derived from locally
 verified SDK proof data. The fixture seeds the source account's starting
-encrypted balance; a one-byte-tampered auditor ciphertext is rejected before
-either account changes, while the exact proof-context pair is accepted and the
-expected source and destination ciphertext state is written.
+encrypted balance; changing one byte in either the low or high auditor
+ciphertext is rejected before either account changes, while the exact
+proof-context pair is accepted and the expected source and destination
+ciphertext state is written.
 
 These are not ProgramTest: they do not validate real runtime sysvar loading,
 system-account creation, proof-program execution, an actual CPI, or a live
