@@ -3,11 +3,11 @@
 //! Host-only feasibility tests using Solana's current ElGamal SDK types.
 //!
 //! This verifies ciphertext combination, the PodElGamalPubkey byte
-//! representation, deterministic 2-of-3 Shamir interpolation, candidate
-//! masked-inversion arithmetic, test-only Chaum-Pedersen proofs for aggregate
-//! decryption shares, and bounded discrete-log recovery. It is not a production
-//! DKG, an audited MPC, an on-chain verifier, a Token-2022 validator test, or an
-//! Anchor program.
+//! representation, the combined ciphertext's Pedersen commitment equivalence,
+//! deterministic 2-of-3 Shamir interpolation, candidate masked-inversion
+//! arithmetic, test-only Chaum-Pedersen proofs for aggregate decryption shares,
+//! and bounded discrete-log recovery. It is not a production DKG, an audited
+//! MPC, an on-chain verifier, a Token-2022 validator test, or an Anchor program.
 
 use std::collections::HashMap;
 
@@ -15,10 +15,12 @@ use curve25519_dalek::{ristretto::RistrettoPoint, scalar::Scalar};
 use sha2::{Digest, Sha512};
 use solana_zk_sdk::encryption::{
     elgamal::{ElGamalCiphertext, ElGamalPubkey, ElGamalSecretKey},
-    pedersen::{G, H},
+    pedersen::{G, H, PedersenOpening},
 };
 use solana_zk_sdk_pod::encryption::elgamal::PodElGamalPubkey;
-use spl_token_confidential_transfer_proof_generation::try_combine_lo_hi_ciphertexts;
+use spl_token_confidential_transfer_proof_generation::{
+    try_combine_lo_hi_ciphertexts, try_combine_lo_hi_openings,
+};
 
 const MAX_BIDS: usize = 8;
 const MVP_MAX_BID: u64 = (1u64 << 32) - 1;
@@ -229,6 +231,40 @@ mod tests {
             assert_eq!(
                 ciphertext.decrypt_u32(&ElGamalSecretKey::from(fixture.master_secret)),
                 Some(amount)
+            );
+        }
+    }
+
+    #[test]
+    fn combined_transfer_ciphertext_is_the_sdk_pedersen_commitment_to_full_amount() {
+        let fixture = threshold_key_fixture();
+        let secret = ElGamalSecretKey::from(fixture.master_secret);
+
+        for amount in [1, 65_535, 65_536, 123_456_789, MVP_MAX_BID] {
+            let (low, high) = split_bid(amount);
+            let low_opening = PedersenOpening::new(Scalar::from(amount + 17));
+            let high_opening = PedersenOpening::new(Scalar::from(amount * 3 + 91));
+            let low_ciphertext = fixture.aggregate_pubkey.encrypt_with_u64(low, &low_opening);
+            let high_ciphertext = fixture
+                .aggregate_pubkey
+                .encrypt_with_u64(high, &high_opening);
+
+            let combined_ciphertext =
+                try_combine_lo_hi_ciphertexts(&low_ciphertext, &high_ciphertext, 16)
+                    .expect("the Token-2022 16-bit shift must be supported");
+            let combined_opening = try_combine_lo_hi_openings(&low_opening, &high_opening, 16)
+                .expect("the Token-2022 16-bit opening shift must be supported");
+            let full_amount_ciphertext = fixture
+                .aggregate_pubkey
+                .encrypt_with_u64(amount, &combined_opening);
+
+            // The fixed openings are test fixtures. This checks the SDK's
+            // ciphertext algebra, not a transfer proof or production binding.
+            assert_eq!(combined_ciphertext, full_amount_ciphertext);
+            assert_eq!(
+                combined_ciphertext.decrypt_u32(&secret),
+                Some(amount),
+                "combined auditor ciphertext must encode the original amount"
             );
         }
     }
