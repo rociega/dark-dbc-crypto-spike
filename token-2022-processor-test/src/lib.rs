@@ -4,10 +4,10 @@
 //! values and a host Rent syscall stub. Other tests inspect the CPI-compatible
 //! instruction builder and call the transfer proof-context extractor with
 //! in-memory context accounts generated from locally verified SDK proof data.
-//! The direct transfer test also invokes Token-2022's `Processor::process`
-//! using synthetic proof-context accounts and a manually seeded source balance.
-//! None executes the native Solana ProgramTest runtime, the proof program, or an
-//! actual CPI.
+//! The direct transfer test invokes Token-2022's `Processor::process` for
+//! `Transfer` and `ApplyPendingBalance`, using synthetic proof-context accounts
+//! and a manually seeded source balance. None executes the native Solana
+//! ProgramTest runtime, the proof program, or an actual CPI.
 
 #[cfg(test)]
 mod tests {
@@ -929,6 +929,60 @@ mod tests {
                 u64::from(confidential_transfer_account.pending_balance_credit_counter),
                 1
             );
+        }
+
+        let destination_full_ciphertext = destination_keypair
+            .pubkey()
+            .encrypt_with_u64(transfer_amount, &combined_transfer_opening);
+        let destination_full_ciphertext_pod: PodElGamalCiphertext =
+            destination_full_ciphertext.into();
+        let apply_pending_balance = confidential_transfer_instruction::inner_apply_pending_balance(
+            &token_program_id,
+            &destination_account_key,
+            1,
+            &DecryptableBalance::default(),
+            &authority_key,
+            &[],
+        )
+        .unwrap();
+        Processor::process(
+            &token_program_id,
+            &[destination_info.clone(), authority_info.clone()],
+            &apply_pending_balance.data,
+        )
+        .expect("apply the accepted transfer's pending destination balance");
+        {
+            let destination_account_data = destination_info.data.borrow();
+            let destination_account =
+                StateWithExtensions::<TokenAccount>::unpack(&destination_account_data).unwrap();
+            let confidential_transfer_account = destination_account
+                .get_extension::<ConfidentialTransferAccount>()
+                .unwrap();
+            assert_eq!(
+                confidential_transfer_account.available_balance,
+                destination_full_ciphertext_pod
+            );
+            assert_eq!(
+                confidential_transfer_account.pending_balance_lo,
+                PodElGamalCiphertext::zeroed()
+            );
+            assert_eq!(
+                confidential_transfer_account.pending_balance_hi,
+                PodElGamalCiphertext::zeroed()
+            );
+            assert_eq!(
+                u64::from(confidential_transfer_account.pending_balance_credit_counter),
+                0
+            );
+            assert_eq!(
+                u64::from(confidential_transfer_account.actual_pending_balance_credit_counter),
+                1
+            );
+            assert_eq!(
+                u64::from(confidential_transfer_account.expected_pending_balance_credit_counter),
+                1
+            );
+            assert_eq!(u64::from(destination_account.base.amount), 0);
         }
     }
 }
