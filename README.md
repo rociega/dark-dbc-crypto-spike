@@ -41,11 +41,11 @@ key.
 
 Verification status as of 2026-09-26: the default host-side suite passes 6/6
 tests and `protocol-spike` passes 10/10. Formatting checks pass for all three
-manifests; Clippy passes for the root and `protocol-spike` crates. The separate
-ProgramTest build was attempted serially with debug info disabled and as a
-metadata-only check, but the operating system killed `rustc` while compiling
-`libsecp256k1` before the test ran. Auditor-key storage therefore remains
-unverified.
+manifests; Clippy passes for the root and `protocol-spike` crates. ProgramTest
+builds were attempted in the root package before isolation, serially with debug
+info disabled and as a metadata-only check, but the operating system killed
+`rustc` while compiling `libsecp256k1` before the test ran. Auditor-key storage
+therefore remains unverified.
 
 Run:
 
