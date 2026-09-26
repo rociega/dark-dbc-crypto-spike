@@ -70,4 +70,6 @@ cargo test --manifest-path token-2022-program-test/Cargo.toml
 ## Research notes
 
 See `THRESHOLD_CRYPTO_REVIEW.md` for the source-linked candidate scan and the
-go/no-go criteria before DBC settlement work.
+go/no-go criteria before DBC settlement work. See
+`SOLANA_ZK_LINKAGE_REVIEW.md` for the separate proof-system and Token-2022
+linkage scan.
