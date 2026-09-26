@@ -1,0 +1,11 @@
+[package]
+name = "dark-dbc-protocol-spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "dark_dbc_protocol_spike"
+path = "src/lib.rs"
+
+[dependencies]
