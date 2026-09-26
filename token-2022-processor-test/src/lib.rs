@@ -1,8 +1,9 @@
 //! Lightweight, direct-processor check for Token-2022 mint initialization.
 //!
 //! This invokes the Token-2022 processor with in-memory AccountInfo values. It
-//! avoids the native Solana ProgramTest runtime, so it does not validate runtime
-//! sysvar loading, system-account creation, CPIs, or a confidential transfer.
+//! supplies Rent through a host syscall stub and avoids the native Solana
+//! ProgramTest runtime. It does not validate actual runtime sysvar loading,
+//! system-account creation, CPIs, or a confidential transfer.
 
 #[cfg(test)]
 mod tests {
@@ -10,7 +11,7 @@ mod tests {
     use solana_account_info::AccountInfo;
     use solana_pubkey::Pubkey;
     use solana_rent::Rent;
-    use solana_sysvar::Sysvar;
+    use solana_sysvar::program_stubs::{self, SyscallStubs};
     use solana_zk_sdk::encryption::elgamal::{ElGamalPubkey, ElGamalSecretKey};
     use solana_zk_sdk_token::encryption::{
         elgamal::ElGamalPubkey as TokenElGamalPubkey,
@@ -27,6 +28,27 @@ mod tests {
         processor::Processor,
         state::Mint,
     };
+    use std::sync::Mutex;
+
+    static SYSCALL_STUB_LOCK: Mutex<()> = Mutex::new(());
+
+    struct RentSyscallStubs;
+
+    impl SyscallStubs for RentSyscallStubs {
+        fn sol_get_rent_sysvar(&self, _var_addr: *mut u8) -> u64 {
+            0
+        }
+    }
+
+    struct SyscallStubGuard(Option<Box<dyn SyscallStubs>>);
+
+    impl Drop for SyscallStubGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.0.take() {
+                program_stubs::set_syscall_stubs(previous);
+            }
+        }
+    }
 
     #[test]
     fn processor_initializes_mint_and_stores_sdk_compatible_auditor_key() {
@@ -71,23 +93,11 @@ mod tests {
         )
         .expect("Token-2022 processor should initialize the confidential-transfer extension");
 
-        let rent_key = solana_sdk_ids::sysvar::rent::id();
-        let mut rent_lamports = 1;
-        let mut rent_data = vec![0u8; Rent::size_of()];
-        let mut rent_info = AccountInfo::new(
-            &rent_key,
-            false,
-            false,
-            &mut rent_lamports,
-            &mut rent_data,
-            &rent_key,
-            false,
-            0,
-        );
-        rent.to_account_info(&mut rent_info)
-            .expect("serialize the rent sysvar fixture");
-
-        let initialize_base_mint = token_instruction::initialize_mint(
+        let _syscall_lock = SYSCALL_STUB_LOCK.lock().unwrap();
+        let _syscall_stub_guard = SyscallStubGuard(Some(program_stubs::set_syscall_stubs(
+            Box::new(RentSyscallStubs),
+        )));
+        let initialize_base_mint = token_instruction::initialize_mint2(
             &token_program_id,
             &mint_key,
             &authority_key,
@@ -97,7 +107,7 @@ mod tests {
         .unwrap();
         Processor::process(
             &token_program_id,
-            &[mint_info.clone(), rent_info],
+            &[mint_info.clone()],
             &initialize_base_mint.data,
         )
         .expect("Token-2022 processor should initialize the base mint");
