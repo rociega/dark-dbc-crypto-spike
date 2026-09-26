@@ -52,10 +52,13 @@ locally verified proof fixtures. It manually seeds the source account's
 starting available-balance ciphertext, confirms one-byte changes to either the
 low or high auditor ciphertext are rejected before either account changes,
 then confirms the exact pair is accepted and the expected source ciphertext and
-destination pending balances are written. This exercises Token-2022's transfer
-processor path, but not the proof program or a CPI: the context accounts are
-synthetic, the pre-transfer balance is seeded, and neither ProgramTest nor the
-native Solana runtime runs.
+destination pending balances are written. It then processes
+`ApplyPendingBalance` and confirms the destination available ciphertext equals
+full-amount encryption with the combined opening, the pending ciphertexts are
+cleared, and the public token amount stays zero. This exercises Token-2022's
+transfer and pending-balance processor paths, but not the proof program or a
+CPI: the context accounts are synthetic, the pre-transfer balance is seeded,
+and neither ProgramTest nor the native Solana runtime runs.
 See the [harness tests](token-2022-processor-test/src/lib.rs).
 
 This could remove a separate funding-time proof that equates a Poseidon amount
