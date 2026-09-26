@@ -84,9 +84,11 @@ between that commitment and the accepted ciphertext. With the CPI alternative
 above, the successful Token-2022 CPI can bind the stored ciphertext to the
 accepted transfer, but a later client claim proof must still bind its hidden
 amount to that ciphertext and establish `v_i = floor(a_i * Y / Q)` without
-revealing the bidder, bid index, or note leaf. Verifying a Token-2022 transfer
-proof and an unrelated claim proof is not enough. See the fixed-eight proof
-contract in `DARK_DBC_REDESIGN.md`.
+revealing which funded-bid record or note leaf supplied the claim. The
+participation record may identify the bidder; the required privacy property is
+that it not be publicly linked to the later claim. Verifying a Token-2022
+transfer proof and an unrelated claim proof is not enough. See the fixed-eight
+proof contract in `DARK_DBC_REDESIGN.md`.
 
 ## Candidates inspected
 
