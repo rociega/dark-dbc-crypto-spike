@@ -21,7 +21,8 @@ directly with in-memory `AccountInfo` values and a host syscall stub for
 route accepts the SDK key and stores it in the confidential-transfer mint
 extension. It is not ProgramTest: it does not validate actual runtime sysvar
 loading, system-program account creation, CPI behavior, or a confidential
-transfer proof context. Treat it as partial processor evidence only.
+transfer proof context. It also uses a known test scalar; neither mint test
+models or validates DKG. Treat it as partial processor evidence only.
 
 The masked-inversion test is a centrally simulated arithmetic transcript, not
 an MPC security test or DKG. The DLEQ test uses fixed nonces and does not
