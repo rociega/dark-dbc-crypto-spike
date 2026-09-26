@@ -75,6 +75,41 @@ mod tests {
         }
     }
 
+    fn assert_transfer_accounts_unchanged(
+        source_info: &AccountInfo<'_>,
+        destination_info: &AccountInfo<'_>,
+        expected_source_ciphertext: PodElGamalCiphertext,
+    ) {
+        let source_data = source_info.data.borrow();
+        let source_account = StateWithExtensions::<TokenAccount>::unpack(&source_data).unwrap();
+        assert_eq!(
+            source_account
+                .get_extension::<ConfidentialTransferAccount>()
+                .unwrap()
+                .available_balance,
+            expected_source_ciphertext
+        );
+
+        let destination_data = destination_info.data.borrow();
+        let destination_account =
+            StateWithExtensions::<TokenAccount>::unpack(&destination_data).unwrap();
+        let confidential_transfer_account = destination_account
+            .get_extension::<ConfidentialTransferAccount>()
+            .unwrap();
+        assert_eq!(
+            confidential_transfer_account.pending_balance_lo,
+            PodElGamalCiphertext::zeroed()
+        );
+        assert_eq!(
+            confidential_transfer_account.pending_balance_hi,
+            PodElGamalCiphertext::zeroed()
+        );
+        assert_eq!(
+            u64::from(confidential_transfer_account.pending_balance_credit_counter),
+            0
+        );
+    }
+
     #[test]
     fn processor_initializes_mint_and_stores_sdk_compatible_auditor_key() {
         let secret = ElGamalSecretKey::from(Scalar::from(42_424_242u64));
@@ -820,52 +855,30 @@ mod tests {
             authority_info.clone(),
         ];
 
-        let mut tampered_instruction_data = transfer_instruction.data.clone();
         let auditor_low_offset = 2 + std::mem::offset_of!(
             TransferInstructionData,
             transfer_amount_auditor_ciphertext_lo
         );
-        tampered_instruction_data[auditor_low_offset] ^= 1;
-        assert!(
-            Processor::process(
-                &token_program_id,
-                &transfer_accounts,
-                &tampered_instruction_data,
-            )
-            .is_err(),
-            "Token-2022 must reject an auditor ciphertext that differs from the proof context"
+        let auditor_high_offset = 2 + std::mem::offset_of!(
+            TransferInstructionData,
+            transfer_amount_auditor_ciphertext_hi
         );
-        {
-            let source_account_data = source_info.data.borrow();
-            let source_account =
-                StateWithExtensions::<TokenAccount>::unpack(&source_account_data).unwrap();
-            assert_eq!(
-                source_account
-                    .get_extension::<ConfidentialTransferAccount>()
-                    .unwrap()
-                    .available_balance,
+        for tampered_offset in [auditor_low_offset, auditor_high_offset] {
+            let mut tampered_instruction_data = transfer_instruction.data.clone();
+            tampered_instruction_data[tampered_offset] ^= 1;
+            assert!(
+                Processor::process(
+                    &token_program_id,
+                    &transfer_accounts,
+                    &tampered_instruction_data,
+                )
+                .is_err(),
+                "Token-2022 must reject either auditor ciphertext if it differs from the proof context"
+            );
+            assert_transfer_accounts_unchanged(
+                &source_info,
+                &destination_info,
                 starting_source_ciphertext_pod,
-                "mismatched auditor ciphertext must fail before source state changes"
-            );
-        }
-        {
-            let destination_account_data = destination_info.data.borrow();
-            let destination_account =
-                StateWithExtensions::<TokenAccount>::unpack(&destination_account_data).unwrap();
-            let confidential_transfer_account = destination_account
-                .get_extension::<ConfidentialTransferAccount>()
-                .unwrap();
-            assert_eq!(
-                confidential_transfer_account.pending_balance_lo,
-                PodElGamalCiphertext::zeroed()
-            );
-            assert_eq!(
-                confidential_transfer_account.pending_balance_hi,
-                PodElGamalCiphertext::zeroed()
-            );
-            assert_eq!(
-                u64::from(confidential_transfer_account.pending_balance_credit_counter),
-                0
             );
         }
 
