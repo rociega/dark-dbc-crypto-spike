@@ -2,10 +2,12 @@
 
 This is a feasibility test harness, not a deployable program. It uses the
 versioned Solana ElGamal SDK and Token-2022 confidential-transfer
-proof-generation helper to test low/high ciphertext combination, Pod public
-key encoding, deterministic 2-of-3 Shamir arithmetic, candidate masked-inversion
-arithmetic, test-only Chaum-Pedersen proofs for aggregate decryption shares,
-aggregate ciphertext decryption, and bounded discrete-log recovery.
+proof-generation helper to test low/high ciphertext combination, equivalence
+between the combined ciphertext and a full-amount SDK Pedersen commitment, Pod
+public-key encoding, deterministic 2-of-3 Shamir arithmetic, candidate
+masked-inversion arithmetic, test-only Chaum-Pedersen proofs for aggregate
+decryption shares, aggregate ciphertext decryption, and bounded discrete-log
+recovery.
 
 The separate `token-2022-program-test` harness initializes a
 confidential-transfer mint in Solana ProgramTest and reads back the exact
@@ -24,12 +26,17 @@ loading, system-program account creation, CPI behavior, or a confidential
 transfer proof context. It also uses a known test scalar; neither mint test
 models or validates DKG. Treat it as partial processor evidence only.
 
+A host test also confirms that the SDK-combined low/high ciphertext equals a
+full-amount ciphertext formed with the SDK-combined Pedersen opening. This is
+an algebra check only; it does not prove Token-2022 proof-context acceptance or
+link a bid record to a later claim.
+
 The masked-inversion test is a centrally simulated arithmetic transcript, not
 an MPC security test or DKG. The DLEQ test uses fixed nonces and does not
 implement a production proof encoding, verifier, or nonce generator. The
-harness does not implement the custom per-bid ZK commitment link, Token-2022
-CPI, confidential-vault custody, Anchor, or DBC settlement. Passing tests do
-not prove those blockers are solved.
+harness does not implement a client-generated proof linking funded ciphertexts
+to private claim notes, Token-2022 CPI, confidential-vault custody, Anchor, or
+DBC settlement. Passing tests do not prove those blockers are solved.
 
 The host-side dependency versions are pinned in `Cargo.toml` and `Cargo.lock`;
 the isolated ProgramTest dependencies have their own manifest and lockfile.
@@ -48,7 +55,7 @@ distributed-inversion/DKG remains the next cryptographic gate. The ordinary
 threshold-decryption fixture still uses the full test secret to construct its
 key.
 
-Verification status as of 2026-09-26: the default host-side suite passes 6/6
+Verification status as of 2026-09-26: the default host-side suite passes 7/7
 tests, `protocol-spike` passes 10/10, and the direct Token-2022 processor check
 passes 1/1. Formatting checks pass for all four manifests; Clippy passes for
 the root, `protocol-spike`, and `token-2022-processor-test` crates. ProgramTest
