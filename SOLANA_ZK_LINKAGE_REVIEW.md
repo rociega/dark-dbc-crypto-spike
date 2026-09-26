@@ -44,9 +44,10 @@ ciphertext bytes in its data, forwards all three context accounts, and encodes
 zero offsets. Another generates and locally verifies SDK proof data, places
 only its contexts into synthetic in-memory accounts, invokes Token-2022's
 `verify_transfer_proof` helper, and confirms the exact auditor ciphertexts are
-extracted. These tests do not execute the proof program, `process_transfer`, a
-CPI, or the Solana runtime, so they do not establish that a live transfer
-accepts the context. See the [harness tests](token-2022-processor-test/src/lib.rs).
+extracted; a mutated proof-type tag is rejected. These tests do not execute the
+proof program, `process_transfer`, a CPI, or the Solana runtime, so they do not
+establish that a live transfer accepts the context. See the
+[harness tests](token-2022-processor-test/src/lib.rs).
 
 This could remove a separate funding-time proof that equates a Poseidon amount
 commitment with the Token-2022 ciphertext: the auction program would store the
