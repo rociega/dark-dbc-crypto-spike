@@ -3,11 +3,11 @@
 This is a feasibility test harness, not a deployable program. It uses the
 versioned Solana ElGamal SDK and Token-2022 confidential-transfer
 proof-generation helper to test low/high ciphertext combination, equivalence
-between the combined ciphertext and a full-amount SDK Pedersen commitment, Pod
-public-key encoding, deterministic 2-of-3 Shamir arithmetic, candidate
-masked-inversion arithmetic, test-only Chaum-Pedersen proofs for aggregate
-decryption shares, aggregate ciphertext decryption, and bounded discrete-log
-recovery.
+between that combined ciphertext and full-amount encryption with the
+SDK-combined Pedersen opening, Pod public-key encoding, deterministic 2-of-3
+Shamir arithmetic, candidate masked-inversion arithmetic, test-only
+Chaum-Pedersen proofs for aggregate decryption shares, aggregate ciphertext
+decryption, and bounded discrete-log recovery.
 
 The separate `token-2022-program-test` harness initializes a
 confidential-transfer mint in Solana ProgramTest and reads back the exact
