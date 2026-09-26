@@ -302,6 +302,7 @@ dependencies = [
 name = "dark-dbc-token-2022-processor-test"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "curve25519-dalek",
  "solana-account-info",
  "solana-pubkey 2.4.0",
@@ -311,6 +312,7 @@ dependencies = [
  "solana-zk-sdk 2.3.13",
  "solana-zk-sdk 7.0.1",
  "spl-token-2022",
+ "spl-token-confidential-transfer-proof-extraction",
 ]
 
 [[package]]
