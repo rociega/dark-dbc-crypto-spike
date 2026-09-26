@@ -1,9 +1,10 @@
-//! Lightweight, direct-processor check for Token-2022 mint initialization.
+//! Lightweight Token-2022 processor and CPI-instruction-builder checks.
 //!
-//! This invokes the Token-2022 processor with in-memory AccountInfo values. It
-//! supplies Rent through a host syscall stub and avoids the native Solana
-//! ProgramTest runtime. It does not validate actual runtime sysvar loading,
-//! system-account creation, CPIs, or a confidential transfer.
+//! The mint test invokes the Token-2022 processor with in-memory AccountInfo
+//! values and a host Rent syscall stub. The transfer test only inspects the
+//! CPI-compatible instruction builder. Neither executes the native Solana
+//! ProgramTest runtime, system-account creation, an actual CPI, or a
+//! confidential transfer.
 
 #[cfg(test)]
 mod tests {
@@ -14,8 +15,11 @@ mod tests {
     use solana_sysvar::program_stubs::{self, SyscallStubs};
     use solana_zk_sdk::encryption::elgamal::{ElGamalPubkey, ElGamalSecretKey};
     use solana_zk_sdk_token::encryption::{
-        elgamal::ElGamalPubkey as TokenElGamalPubkey,
-        pod::elgamal::PodElGamalPubkey as TokenPodElGamalPubkey,
+        elgamal::{ElGamalPubkey as TokenElGamalPubkey, ElGamalSecretKey as TokenElGamalSecretKey},
+        pod::elgamal::{PodElGamalCiphertext, PodElGamalPubkey as TokenPodElGamalPubkey},
+    };
+    use spl_token_2022::extension::confidential_transfer::{
+        DecryptableBalance, instruction::TransferInstructionData,
     };
     use spl_token_2022::{
         extension::{
@@ -28,6 +32,7 @@ mod tests {
         processor::Processor,
         state::Mint,
     };
+    use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation;
     use std::sync::Mutex;
 
     static SYSCALL_STUB_LOCK: Mutex<()> = Mutex::new(());
@@ -123,5 +128,65 @@ mod tests {
                 .equals(&auditor_key),
             "mint must retain the exact SDK-derived Pod auditor key"
         );
+    }
+
+    #[test]
+    fn inner_transfer_cpi_builder_carries_exact_ciphertexts_and_context_accounts() {
+        let token_program_id = spl_token_2022::id();
+        let source = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let destination = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let equality_context = Pubkey::new_unique();
+        let ciphertext_validity_context = Pubkey::new_unique();
+        let range_context = Pubkey::new_unique();
+        let auditor_secret = TokenElGamalSecretKey::from(Scalar::from(99_991u64));
+        let auditor_pubkey = TokenElGamalPubkey::new(&auditor_secret);
+        let auditor_ciphertext_lo: PodElGamalCiphertext = auditor_pubkey.encrypt_u64(0x1234).into();
+        let auditor_ciphertext_hi: PodElGamalCiphertext = auditor_pubkey.encrypt_u64(0x5678).into();
+        let new_source_balance = DecryptableBalance::default();
+
+        let instruction = confidential_transfer_instruction::inner_transfer(
+            &token_program_id,
+            &source,
+            &mint,
+            &destination,
+            &new_source_balance,
+            &auditor_ciphertext_lo,
+            &auditor_ciphertext_hi,
+            &authority,
+            &[],
+            ProofLocation::ContextStateAccount(&equality_context),
+            ProofLocation::ContextStateAccount(&ciphertext_validity_context),
+            ProofLocation::ContextStateAccount(&range_context),
+        )
+        .expect("Token-2022 should construct its CPI-compatible transfer instruction");
+
+        assert_eq!(instruction.accounts.len(), 7);
+        assert_eq!(instruction.accounts[3].pubkey, equality_context);
+        assert_eq!(instruction.accounts[4].pubkey, ciphertext_validity_context);
+        assert_eq!(instruction.accounts[5].pubkey, range_context);
+        assert!(instruction.accounts[6].is_signer);
+        assert_eq!(
+            instruction.data.len(),
+            2 + std::mem::size_of::<TransferInstructionData>()
+        );
+
+        let transfer_data =
+            bytemuck::pod_read_unaligned::<TransferInstructionData>(&instruction.data[2..]);
+        assert_eq!(
+            transfer_data.transfer_amount_auditor_ciphertext_lo,
+            auditor_ciphertext_lo
+        );
+        assert_eq!(
+            transfer_data.transfer_amount_auditor_ciphertext_hi,
+            auditor_ciphertext_hi
+        );
+        assert_eq!(transfer_data.equality_proof_instruction_offset, 0);
+        assert_eq!(
+            transfer_data.ciphertext_validity_proof_instruction_offset,
+            0
+        );
+        assert_eq!(transfer_data.range_proof_instruction_offset, 0);
     }
 }
