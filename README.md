@@ -15,6 +15,14 @@ proof-context flow. It is isolated from the default host-side suite because the
 native Solana runtime exceeds this workspace's memory limit during compilation;
 the test remains unverified until it completes on a larger runner.
 
+The separate `token-2022-processor-test` invokes the Token-2022 processor
+directly with in-memory `AccountInfo` values and an explicit rent account. It
+passes 1/1 and confirms that the processor accepts the SDK key and stores it in
+the confidential-transfer mint extension. It is not ProgramTest: it does not
+exercise runtime sysvar loading, system-program account creation, CPI behavior,
+the `InitializeMint2` rent-sysvar path, or a confidential transfer proof
+context. Treat it as partial processor evidence only.
+
 The masked-inversion test is a centrally simulated arithmetic transcript, not
 an MPC security test or DKG. The DLEQ test uses fixed nonces and does not
 implement a production proof encoding, verifier, or nonce generator. The
@@ -40,12 +48,13 @@ threshold-decryption fixture still uses the full test secret to construct its
 key.
 
 Verification status as of 2026-09-26: the default host-side suite passes 6/6
-tests and `protocol-spike` passes 10/10. Formatting checks pass for all three
-manifests; Clippy passes for the root and `protocol-spike` crates. ProgramTest
+tests, `protocol-spike` passes 10/10, and the direct Token-2022 processor check
+passes 1/1. Formatting checks pass for all four manifests; Clippy passes for
+the root, `protocol-spike`, and `token-2022-processor-test` crates. ProgramTest
 builds were attempted in the root package before isolation, serially with debug
 info disabled and as a metadata-only check, but the operating system killed
-`rustc` while compiling `libsecp256k1` before the test ran. Auditor-key storage
-therefore remains unverified.
+`rustc` while compiling `libsecp256k1` before the test ran. ProgramTest runtime
+initialization therefore remains unverified.
 
 Run:
 
@@ -53,9 +62,11 @@ Run:
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo test --manifest-path protocol-spike/Cargo.toml
+cargo test --manifest-path token-2022-processor-test/Cargo.toml
 cargo test --manifest-path token-2022-program-test/Cargo.toml
 ```
 
 ## Research notes
 
-See [THRESHOLD_CRYPTO_REVIEW.md](THRESHOLD_CRYPTO_REVIEW.md) for the source-linked candidate scan and the go/no-go criteria before DBC settlement work.
+See `THRESHOLD_CRYPTO_REVIEW.md` for the source-linked candidate scan and the
+go/no-go criteria before DBC settlement work.
