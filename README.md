@@ -16,12 +16,12 @@ native Solana runtime exceeds this workspace's memory limit during compilation;
 the test remains unverified until it completes on a larger runner.
 
 The separate `token-2022-processor-test` invokes the Token-2022 processor
-directly with in-memory `AccountInfo` values and an explicit rent account. It
-passes 1/1 and confirms that the processor accepts the SDK key and stores it in
-the confidential-transfer mint extension. It is not ProgramTest: it does not
-exercise runtime sysvar loading, system-program account creation, CPI behavior,
-the `InitializeMint2` rent-sysvar path, or a confidential transfer proof
-context. Treat it as partial processor evidence only.
+directly with in-memory `AccountInfo` values and a host syscall stub for
+`Rent::get`. It passes 1/1 and confirms that the `InitializeMint2` processor
+route accepts the SDK key and stores it in the confidential-transfer mint
+extension. It is not ProgramTest: it does not validate actual runtime sysvar
+loading, system-program account creation, CPI behavior, or a confidential
+transfer proof context. Treat it as partial processor evidence only.
 
 The masked-inversion test is a centrally simulated arithmetic transcript, not
 an MPC security test or DKG. The DLEQ test uses fixed nonces and does not
