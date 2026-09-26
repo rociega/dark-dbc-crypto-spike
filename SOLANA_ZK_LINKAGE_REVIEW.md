@@ -38,16 +38,24 @@ amount-commitment hash:
    commitment; auction ID, bidder, bond, and claim-secret hash remain separate
    fields in the domain-separated record.
 
-The lightweight harness tests construction and host-side proof-context
-extraction. One test confirms `inner_transfer` places the exact auditor
-ciphertext bytes in its data, forwards all three context accounts, and encodes
-zero offsets. Another generates and locally verifies SDK proof data, places
-only its contexts into synthetic in-memory accounts, invokes Token-2022's
-`verify_transfer_proof` helper, and confirms the exact auditor ciphertexts are
-extracted; a mutated proof-type tag is rejected. These tests do not execute the
-proof program, `process_transfer`, a CPI, or the Solana runtime, so they do not
-establish that a live transfer accepts the context. See the
-[harness tests](token-2022-processor-test/src/lib.rs).
+The lightweight harness now covers instruction construction, host-side context
+extraction, and a direct Token-2022 processor transfer. One test confirms
+`inner_transfer` carries the exact auditor ciphertext bytes, all three context
+accounts, and zero offsets. Another locally verifies SDK proof data, places its
+contexts into synthetic in-memory accounts, calls `verify_transfer_proof`, and
+checks exact auditor-ciphertext extraction plus rejection of a mutated
+proof-type tag.
+
+A fourth test invokes `Processor::process` with a confidential `Transfer`
+instruction and synthetic in-memory proof-context accounts derived from
+locally verified proof fixtures. It manually seeds the source account's
+starting available-balance ciphertext, confirms a tampered auditor ciphertext
+is rejected before either account changes, then confirms the exact pair is
+accepted and the expected source ciphertext and destination pending balances
+are written. This exercises Token-2022's transfer processor path, but not the
+proof program or a CPI: the context accounts are synthetic, the pre-transfer
+balance is seeded, and neither ProgramTest nor the native Solana runtime runs.
+See the [harness tests](token-2022-processor-test/src/lib.rs).
 
 This could remove a separate funding-time proof that equates a Poseidon amount
 commitment with the Token-2022 ciphertext: the auction program would store the
@@ -61,8 +69,9 @@ The claim proof still has to show that a hidden amount/opening is consistent
 with a ciphertext pair inside the funded-bid root, that the note value is
 `floor(a_i * Y / Q)`, and that the nullifier is tied to the precommitted secret.
 It must hide the source leaf. The claim proof system, threshold DKG, and vault
-custody remain separate blockers. The CPI and proof-context path itself has not
-been executed in ProgramTest or a live Token-2022 transfer.
+custody remain separate blockers. The candidate `fund_bid` CPI has not been
+executed in ProgramTest or through a caller program; the direct host processor
+test does not establish validator-runtime or CPI behavior.
 
 Sources:
 
