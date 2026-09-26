@@ -17,22 +17,27 @@ proof-context flow. It is isolated from the default host-side suite because the
 native Solana runtime exceeds this workspace's memory limit during compilation;
 the test remains unverified until it completes on a larger runner.
 
-The separate `token-2022-processor-test` harness passes 2/2. One test invokes
+The separate `token-2022-processor-test` harness passes 3/3. One test invokes
 the Token-2022 processor with in-memory `AccountInfo` values and a host
 `Rent::get` syscall stub; it confirms the `InitializeMint2` route accepts the
-SDK key and stores it in the confidential-transfer mint extension. The other
-test inspects the CPI-compatible `inner_transfer` instruction builder and
-confirms it carries the exact supplied auditor ciphertext pair and proof
-context accounts with zero instruction offsets. It does not invoke the CPI.
-Neither test is ProgramTest: they do not validate real runtime sysvar loading,
-system-account creation, a confidential transfer, or its accepted proof
-context. The mint fixture uses a known test scalar; nothing here models or
-validates DKG. Treat this as partial processor/builder evidence only.
+SDK key and stores it in the confidential-transfer mint extension. A second
+inspects the CPI-compatible `inner_transfer` builder and confirms it carries
+the exact supplied auditor ciphertext pair and proof-context accounts with zero
+instruction offsets. A third generates and locally verifies SDK proof data,
+places its context bytes into in-memory proof-context accounts, and calls
+Token-2022's `verify_transfer_proof` helper to confirm it extracts the exact
+auditor ciphertext pair. The test does not execute the proof program.
+
+These are not ProgramTest: they do not validate real runtime sysvar loading,
+system-account creation, proof-program execution, an actual CPI, or a
+confidential transfer. The mint fixture uses a known test scalar; nothing here
+models or validates DKG. Treat this as partial processor, context-extraction,
+and instruction-builder evidence only.
 
 A host test also confirms that the SDK-combined low/high ciphertext equals a
 full-amount ciphertext formed with the SDK-combined Pedersen opening. This is
-an algebra check only; it does not prove Token-2022 proof-context acceptance or
-link a bid record to a later claim.
+an algebra check only; it does not prove that a live Token-2022 transfer
+accepts the context or link a bid record to a later claim.
 
 The masked-inversion test is a centrally simulated arithmetic transcript, not
 an MPC security test or DKG. The DLEQ test uses fixed nonces and does not
@@ -60,8 +65,8 @@ threshold-decryption fixture still uses the full test secret to construct its
 key.
 
 Verification status as of 2026-09-26: the default host-side suite passes 7/7
-tests, `protocol-spike` passes 10/10, and the Token-2022 processor/builder
-harness passes 2/2. Formatting checks pass for all four manifests; Clippy
+tests, `protocol-spike` passes 10/10, and the Token-2022 processor/context/
+builder harness passes 3/3. Formatting checks pass for all four manifests; Clippy
 passes for the root, `protocol-spike`, and `token-2022-processor-test` crates.
 ProgramTest builds were attempted in the root package before isolation,
 serially with debug info disabled and as a metadata-only check, but the
