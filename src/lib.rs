@@ -3,11 +3,12 @@
 //! Host-only feasibility tests using Solana's current ElGamal SDK types.
 //!
 //! This verifies ciphertext combination, the PodElGamalPubkey byte
-//! representation, the combined ciphertext's Pedersen commitment equivalence,
-//! deterministic 2-of-3 Shamir interpolation, candidate masked-inversion
-//! arithmetic, test-only Chaum-Pedersen proofs for aggregate decryption shares,
-//! and bounded discrete-log recovery. It is not a production DKG, an audited
-//! MPC, an on-chain verifier, a Token-2022 validator test, or an Anchor program.
+//! representation, equivalence between the combined low/high ciphertext and
+//! full-amount encryption with the combined Pedersen opening, deterministic
+//! 2-of-3 Shamir interpolation, candidate masked-inversion arithmetic,
+//! test-only Chaum-Pedersen proofs for aggregate decryption shares, and bounded
+//! discrete-log recovery. It is not a production DKG, an audited MPC, an
+//! on-chain verifier, a Token-2022 validator test, or an Anchor program.
 
 use std::collections::HashMap;
 
@@ -236,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn combined_transfer_ciphertext_is_the_sdk_pedersen_commitment_to_full_amount() {
+    fn combined_ciphertext_matches_full_amount_ciphertext_with_combined_opening() {
         let fixture = threshold_key_fixture();
         let secret = ElGamalSecretKey::from(fixture.master_secret);
 
