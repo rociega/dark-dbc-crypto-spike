@@ -982,7 +982,7 @@ mod tests {
                 u64::from(confidential_transfer_account.expected_pending_balance_credit_counter),
                 1
             );
-            assert_eq!(u64::from(destination_account.base.amount), 0);
+            assert_eq!(destination_account.base.amount, 0);
         }
     }
 }
