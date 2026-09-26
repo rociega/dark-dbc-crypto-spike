@@ -11,6 +11,8 @@ The fixed-eight design relies on the Token-2022 confidential-transfer ElGamal ke
 
 This is a targeted repository/README scan, not a claim that no suitable implementation exists anywhere.
 
+Additional GitHub repository searches for Ristretto threshold DKG, distributed inversion MPC over Shamir shares, and malicious threshold encryption over Ristretto returned no repository hits. GitHub repository search is incomplete, so this is a search signal, not proof that no implementation exists.
+
 | Candidate | What its repository documents | Why it does not pass this gate |
 |---|---|---|
 | [OpacityLabs/opacity-ferveo](https://github.com/OpacityLabs/opacity-ferveo/blob/dev/README.md) | Synchronous DKG and threshold decryption over BLS12-381; maintained for opacity-stack. Its README says it has not been independently audited and general-purpose use is not a goal. | Different curve and key representation from the Token-2022 ElGamal key. It is not a drop-in implementation of the required H/s distributed inversion. |
