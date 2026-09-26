@@ -26,7 +26,8 @@ the exact supplied auditor ciphertext pair and proof-context accounts with zero
 instruction offsets. A third generates and locally verifies SDK proof data,
 places its context bytes into in-memory proof-context accounts, and calls
 Token-2022's `verify_transfer_proof` helper to confirm it extracts the exact
-auditor ciphertext pair. The test does not execute the proof program.
+auditor ciphertext pair and rejects a mutated proof-type tag. The test does not
+execute the proof program.
 
 These are not ProgramTest: they do not validate real runtime sysvar loading,
 system-account creation, proof-program execution, an actual CPI, or a
