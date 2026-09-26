@@ -388,5 +388,20 @@ mod tests {
         let auditor_pubkey: TokenPodElGamalPubkey = (*auditor_keypair.pubkey()).into();
         assert_eq!(transfer_context.transfer_pubkeys.auditor, auditor_pubkey);
         assert_eq!(context_account_iter.count(), 0);
+
+        let mut malformed_context = context_accounts[1].data.borrow_mut();
+        malformed_context[std::mem::size_of::<Pubkey>()] = 0;
+        drop(malformed_context);
+        let mut malformed_context_iter = context_accounts.iter();
+        assert!(
+            spl_token_2022::extension::confidential_transfer::verify_proof::verify_transfer_proof(
+                &mut malformed_context_iter,
+                0,
+                0,
+                0,
+            )
+            .is_err(),
+            "Token-2022 must reject a context account with the wrong proof type"
+        );
     }
 }
