@@ -1,0 +1,87 @@
+# Solana ZK proof and Token-2022 linkage review
+
+## Decision
+
+A targeted public-GitHub scan found examples of Groth16 and SP1 proof
+verification on Solana, but no drop-in, independently verified implementation
+of the required relation: one private bid amount must open the auction
+commitment and also be the amount encrypted in the exact Token-2022 auditor
+ciphertext pair accepted for that transfer. No settlement or claim code should
+start on the basis of these examples alone.
+
+This was a bounded repository/readme/test-document scan on 2026-09-26, not an
+exhaustive library or security audit.
+
+## Required relation
+
+For each of at most eight bids, a client-generated proof must bind the same
+bounded amount `a_i` to:
+
+- the bidder-bound, domain-separated auction commitment;
+- the low/high Token-2022 auditor ciphertext pair;
+- the accepted confidential-transfer proof context and vault/mint; and
+- the claim/nullifier secret used later to register one private output note.
+
+Verifying a Token-2022 transfer proof and a separate commitment proof is not
+enough; the proofs must establish equality of the hidden amount. The later
+claim proof must establish `v_i = floor(a_i * Y / Q)` without revealing the
+bidder, bid index, or note leaf. See the fixed-eight proof contract in
+`DARK_DBC_REDESIGN.md`.
+
+## Candidates inspected
+
+- [Paraloom Core](https://github.com/paraloom-labs/paraloom-core) describes a
+  shielded Solana pool using Groth16 over BN254, verified through Solana's
+  `alt_bn128` support. Its README does not establish a circuit for Token-2022
+  auditor ciphertexts or the auction commitment-to-transfer relation.
+- [ZK Spot Shield](https://github.com/pprogrammingg/zk-spot-shield) describes
+  an SP1/Groth16 shielded spot-settlement flow with Merkle membership and
+  nullifiers. Its [test matrix](https://github.com/pprogrammingg/zk-spot-shield/blob/main/tests.md)
+  says the program tests do not yet test proof verification, CI does not run
+  the guest zkVM, and tracked proof bytes are fixtures rather than re-proved
+  artifacts. Its README and test matrix therefore do not establish a verified
+  on-chain proof path for this project.
+- [groth16-solana](https://github.com/occludeprotocol/groth16-solana) describes
+  BLS12-381 Groth16 proof encoding and Anchor integration. The inspected README
+  does not document the required Token-2022 relation, a measured Solana
+  verifier cost for this statement, or independent security review.
+- Targeted repository searches for Ristretto/ElGamal proofs on Solana returned
+  no direct candidate. Repository search is incomplete, so this is not proof
+  that no such work exists.
+
+These projects may be useful as references for Merkle/nullifier designs or
+generic proof plumbing. None establishes that the Token-2022 transfer
+ciphertext can be linked to the auction commitment under a practical,
+reviewed Solana verifier.
+
+## Compatibility risk
+
+The Token-2022 ElGamal key and ciphertext types in the current SDK use the
+Ristretto/Curve25519 group. The most concrete Solana pairing-verifier examples
+found here use BN254. A BN254 circuit cannot treat Ristretto operations as
+native-field operations: the circuit must explicitly implement and cost the
+cross-field/group relation, or use a proof architecture that proves the
+Ristretto computation off-chain and verifies a succinct proof on-chain. No
+inspected candidate supplied this exact bridge or its compute measurements.
+
+An SP1-style guest that checks the Ristretto relation and emits a proof for a
+Solana-compatible verifier is a research direction, not a selected or validated
+design. It still must bind the exact accepted Token-2022 proof-context state,
+reject mutations, fit Solana transaction/compute limits, and receive
+independent cryptographic review. It does not solve the separate
+`H / s` threshold-DKG or vault-custody blockers.
+
+## Minimum next experiment
+
+Before settlement code:
+
+1. Freeze the exact public inputs from a real Token-2022 confidential-transfer
+   proof context and the corresponding auditor ciphertext pair.
+2. Implement one bidder-generated proof tying that pair and the commitment to
+   the same bounded amount, then verify it in a pinned Solana test runtime.
+3. Mutate the amount, commitment, ciphertext, transfer context, mint, vault,
+   auction domain, and claimant secret; every mutation must fail.
+4. Measure proof generation time, proof bytes, verifier compute units, account
+   count, and transaction size at one and eight bids.
+5. Keep the protocol blocked unless the relation is reviewed and the separate
+   threshold-DKG and custody gates also pass.
