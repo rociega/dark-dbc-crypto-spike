@@ -55,3 +55,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test --manifest-path protocol-spike/Cargo.toml
 cargo test --manifest-path token-2022-program-test/Cargo.toml
 ```
+
+## Research notes
+
+See [THRESHOLD_CRYPTO_REVIEW.md](THRESHOLD_CRYPTO_REVIEW.md) for the source-linked candidate scan and the go/no-go criteria before DBC settlement work.
