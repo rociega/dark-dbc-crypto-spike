@@ -17,14 +17,17 @@ proof-context flow. It is isolated from the default host-side suite because the
 native Solana runtime exceeds this workspace's memory limit during compilation;
 the test remains unverified until it completes on a larger runner.
 
-The separate `token-2022-processor-test` invokes the Token-2022 processor
-directly with in-memory `AccountInfo` values and a host syscall stub for
-`Rent::get`. It passes 1/1 and confirms that the `InitializeMint2` processor
-route accepts the SDK key and stores it in the confidential-transfer mint
-extension. It is not ProgramTest: it does not validate actual runtime sysvar
-loading, system-program account creation, CPI behavior, or a confidential
-transfer proof context. It also uses a known test scalar; neither mint test
-models or validates DKG. Treat it as partial processor evidence only.
+The separate `token-2022-processor-test` harness passes 2/2. One test invokes
+the Token-2022 processor with in-memory `AccountInfo` values and a host
+`Rent::get` syscall stub; it confirms the `InitializeMint2` route accepts the
+SDK key and stores it in the confidential-transfer mint extension. The other
+test inspects the CPI-compatible `inner_transfer` instruction builder and
+confirms it carries the exact supplied auditor ciphertext pair and proof
+context accounts with zero instruction offsets. It does not invoke the CPI.
+Neither test is ProgramTest: they do not validate real runtime sysvar loading,
+system-account creation, a confidential transfer, or its accepted proof
+context. The mint fixture uses a known test scalar; nothing here models or
+validates DKG. Treat this as partial processor/builder evidence only.
 
 A host test also confirms that the SDK-combined low/high ciphertext equals a
 full-amount ciphertext formed with the SDK-combined Pedersen opening. This is
@@ -39,7 +42,8 @@ to private claim notes, Token-2022 CPI, confidential-vault custody, Anchor, or
 DBC settlement. Passing tests do not prove those blockers are solved.
 
 The host-side dependency versions are pinned in `Cargo.toml` and `Cargo.lock`;
-the isolated ProgramTest dependencies have their own manifest and lockfile.
+the isolated ProgramTest and processor-check dependencies have their own
+manifests and lockfiles.
 Token-2022 9.x uses Solana 2.x program types, so the in-process runtime is
 version-aligned to Solana 2.3.13. The host proof-generation crate uses the
 newer ElGamal SDK; the integration fixture converts the encoded public key
@@ -56,13 +60,13 @@ threshold-decryption fixture still uses the full test secret to construct its
 key.
 
 Verification status as of 2026-09-26: the default host-side suite passes 7/7
-tests, `protocol-spike` passes 10/10, and the direct Token-2022 processor check
-passes 1/1. Formatting checks pass for all four manifests; Clippy passes for
-the root, `protocol-spike`, and `token-2022-processor-test` crates. ProgramTest
-builds were attempted in the root package before isolation, serially with debug
-info disabled and as a metadata-only check, but the operating system killed
-`rustc` while compiling `libsecp256k1` before the test ran. ProgramTest runtime
-initialization therefore remains unverified.
+tests, `protocol-spike` passes 10/10, and the Token-2022 processor/builder
+harness passes 2/2. Formatting checks pass for all four manifests; Clippy
+passes for the root, `protocol-spike`, and `token-2022-processor-test` crates.
+ProgramTest builds were attempted in the root package before isolation,
+serially with debug info disabled and as a metadata-only check, but the
+operating system killed `rustc` while compiling `libsecp256k1` before the test
+ran. ProgramTest runtime initialization therefore remains unverified.
 
 Run:
 
