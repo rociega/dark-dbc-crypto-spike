@@ -333,15 +333,15 @@ bidder proves only their own amount; no ordinary batch prover receives all
 eight witnesses. It must not be represented as solved until each blocker below
 is verified:
 
-0. **Pin the chain stack.** The attached Cargo scaffold uses wildcard
-   dependencies. The current Token-2022 source deprecates its old instruction
-   re-exports in favor of `spl-token-2022-interface`; current interface docs
-   are versioned separately. Pin mutually compatible Solana, Anchor, Token-2022
-   program/interface, proof-generation, and DBC versions before writing CPI or
-   circuit code. Do not assume the latest crate matches the target cluster.
-   Prefer the Token-2022 auditor ciphertext pair as the encrypted amount if a
-   DKG public key is accepted for the mint's auditor key; test this before
-   adding a separate application ciphertext.
+ 0. **Pin the deployment stack.** The host prototypes now pin their Rust
+    dependencies, and the processor harness aligns Token-2022 9.0.0 with
+    Solana 2.3.13. That does not select or validate the eventual cluster,
+    Anchor/DBC program, Token-2022 interface, or proof-generation deployment
+    stack. Pin mutually compatible versions before writing settlement or
+    circuit code; do not assume the latest crate matches the target cluster.
+    Prefer the Token-2022 auditor ciphertext pair as the encrypted amount if a
+    DKG public key is accepted for the mint's auditor key; test this before
+    adding a separate application ciphertext.
 1. **Token-2022 linkage proof.** The existing Token-2022 proof flow verifies
    confidential token operations; it is not a general-purpose auction
     circuit. Implement and test a per-bid ZK relation binding the same bounded
