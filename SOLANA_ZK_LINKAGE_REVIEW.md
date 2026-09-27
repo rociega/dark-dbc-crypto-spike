@@ -79,7 +79,8 @@ test does not establish validator-runtime or CPI behavior.
 
 The protocol spike also has a host-only fixed-depth-three Merkle-path helper
 and eight-slot nullifier registration/spend model. It tests path construction,
-registered leaf count, unique nullifiers, and single-spend state transitions.
+incremental root updates, registered leaf count, unique nullifiers, and
+single-spend state transitions.
 The test-only SHA-256 pair hash is not a selected circuit hash; the helper
 publishes the leaf index/path and does not prove note ownership or hide the
 funded-bid source.
