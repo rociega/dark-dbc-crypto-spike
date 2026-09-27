@@ -77,6 +77,20 @@ custody remain separate blockers. The candidate `fund_bid` CPI has not been
 executed in ProgramTest or through a caller program; the direct host processor
 test does not establish validator-runtime or CPI behavior.
 
+The protocol spike also has a host-only fixed-depth-three Merkle-path helper
+and eight-slot nullifier registration/spend model. It tests path construction,
+registered leaf count, unique nullifiers, and single-spend state transitions.
+The test-only SHA-256 pair hash is not a selected circuit hash; the helper
+publishes the leaf index/path and does not prove note ownership or hide the
+funded-bid source.
+
+An alternative-runtime check did not remove the caller-CPI gap. LiteSVM's
+program-loading flow expects a compiled SBF program artifact, and this workspace
+has neither the SBF builder nor program ELF files. Mollusk is another candidate
+for a later SBF-based test, not a replacement for the host processor test.
+Given the pinned Token-2022/Solana-2.x stack, the most direct next runtime gate
+remains the isolated ProgramTest on a larger-memory runner.
+
 Sources:
 
 - [ElGamal ciphertext representation, SDK 7.0.1](https://docs.rs/solana-zk-sdk/7.0.1/src/solana_zk_sdk/encryption/elgamal.rs.html)
@@ -84,6 +98,8 @@ Sources:
 - [Low/high ciphertext and opening combination, proof-generation 0.6.1](https://docs.rs/spl-token-confidential-transfer-proof-generation/0.6.1/src/spl_token_confidential_transfer_proof_generation/lib.rs.html)
 - [Token-2022 confidential-transfer processor, 9.0.0](https://docs.rs/spl-token-2022/9.0.0/src/spl_token_2022/extension/confidential_transfer/processor.rs.html)
 - [Proof-context account extraction, proof-extraction 0.5.1](https://docs.rs/spl-token-confidential-transfer-proof-extraction/0.5.1/src/spl_token_confidential_transfer_proof_extraction/instruction.rs.html)
+- [LiteSVM program-loading API](https://docs.rs/litesvm/0.6.1/litesvm/)
+- [Mollusk SVM crate](https://docs.rs/mollusk-svm/0.1.0/mollusk_svm/)
 
 ## Required relation
 
