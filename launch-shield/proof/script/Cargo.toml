@@ -1,0 +1,34 @@
+[package]
+name = "launch-shield-proof-runner"
+version = "0.1.0"
+edition = "2021"
+default-run = "launch-shield-proof-runner"
+
+[[bin]]
+name = "launch-shield-proof-runner"
+path = "src/main.rs"
+
+[features]
+sp1-prover = ["dep:hex", "dep:sp1-sdk"]
+
+[[bin]]
+name = "launch-shield-vkey"
+path = "src/bin/vkey.rs"
+required-features = ["sp1-prover"]
+
+[[bin]]
+name = "launch-shield-prove"
+path = "src/bin/prove.rs"
+required-features = ["sp1-prover"]
+
+[dependencies]
+launch-shield-proof-relation = { path = "../relation" }
+sp1-build = "=5.0.0"
+sp1-core-executor = "=5.2.4"
+sp1-core-machine = "=5.2.4"
+sp1-stark = "=5.2.4"
+hex = { version = "=0.4.3", optional = true }
+sp1-sdk = { version = "=5.0.0", default-features = false, optional = true }
+
+[build-dependencies]
+sp1-build = "=5.0.0"
