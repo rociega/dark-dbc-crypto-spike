@@ -281,6 +281,15 @@ deterministic 2-of-3 aggregate-decryption arithmetic, candidate
 masked-inversion arithmetic, test-only Chaum-Pedersen decryption-share proofs,
 and bounded recovery of public `Q < 2^35`.
 
+The combined-ciphertext test now also uses a transparent host reference
+predicate: it recomputes the Pedersen commitment and decryption handle from a
+candidate amount, opening, and auditor key, and rejects mutations to each.
+This makes the ciphertext-opening witness relation executable as a test
+oracle, but it is not a zero-knowledge proof, does not consume serialized
+proof-context bytes, and has no on-chain verification path. An SP1 guest would
+still need to implement and benchmark the same relation over the exact
+Token-2022 encodings.
+
 The spike also found a key-generation blocker: the SDK derives its ElGamal
 public key as `H / s` from secret scalar `s`, so public keys generated
 independently from ordinary Shamir shares do not interpolate to the required
