@@ -56,10 +56,12 @@ models or validates DKG.
 Treat this as partial processor, context-extraction, and instruction-builder
 evidence only.
 
-A host test also confirms that the SDK-combined low/high ciphertext equals a
-full-amount ciphertext formed with the SDK-combined Pedersen opening. This is
-an algebra check only; it does not prove an on-chain Token-2022 CPI accepts the
-context or link a bid record to a later claim.
+A host reference predicate recomputes the ElGamal Pedersen commitment and
+decryption handle from a public key, amount, and opening. Tests confirm the
+SDK-combined low/high ciphertext satisfies that relation and reject mutated
+amounts and openings. This is a transparent witness check only, not a ZK proof;
+it does not prove an on-chain Token-2022 CPI accepts the context or link a bid
+record to a later claim.
 
 The masked-inversion test is a centrally simulated arithmetic transcript, not
 an MPC security test or DKG. The DLEQ test uses fixed nonces and does not
