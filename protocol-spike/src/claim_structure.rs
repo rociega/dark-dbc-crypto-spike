@@ -1,8 +1,9 @@
 //! Fixed-capacity claim data structures for host-side invariant tests.
 //!
 //! This module only constructs and checks ordinary Merkle paths and models
-//! eight nullifier slots. It does not choose the production hash, create or
-//! verify a zero-knowledge proof, authenticate a claimant, or transfer assets.
+//! registration/spend state for eight claims. It does not choose the production
+//! hash, create or verify a zero-knowledge proof, authenticate a claimant, or
+//! transfer assets.
 
 use crate::MAX_BIDS;
 
@@ -46,6 +47,23 @@ pub struct FixedDepthMerkleTree {
 }
 
 impl FixedDepthMerkleTree {
+    fn empty(empty_leaf: Digest, mut hash_pair: impl FnMut(&Digest, &Digest) -> Digest) -> Self {
+        let mut levels = vec![vec![empty_leaf; CLAIM_TREE_CAPACITY]];
+        for _ in 0..CLAIM_TREE_DEPTH {
+            let previous = levels.last().expect("leaf level is always present");
+            let next = previous
+                .chunks_exact(2)
+                .map(|pair| hash_pair(&pair[0], &pair[1]))
+                .collect();
+            levels.push(next);
+        }
+
+        Self {
+            leaf_count: 0,
+            levels,
+        }
+    }
+
     pub fn new(
         leaves: &[Digest],
         empty_leaf: Digest,
@@ -246,6 +264,78 @@ impl NullifierRegistry {
     }
 }
 
+/// Host-side model that keeps claim-note append and nullifier registration
+/// counts in sync.
+///
+/// Registration remains publicly observable and this model does not link a
+/// hidden source bid to its note. Production code must prove that relation
+/// without exposing the leaf index or registration correspondence. Supply the
+/// same pair-hash function on every registration and path-verification call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClaimPool {
+    tree: FixedDepthMerkleTree,
+    nullifiers: NullifierRegistry,
+}
+
+impl ClaimPool {
+    pub fn new(empty_leaf: Digest, hash_pair: impl FnMut(&Digest, &Digest) -> Digest) -> Self {
+        Self {
+            tree: FixedDepthMerkleTree::empty(empty_leaf, hash_pair),
+            nullifiers: NullifierRegistry::default(),
+        }
+    }
+
+    pub fn leaf_count(&self) -> usize {
+        self.tree.leaf_count()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tree.leaf_count() == 0
+    }
+
+    pub fn root(&self) -> &Digest {
+        self.tree.root()
+    }
+
+    pub fn witness(&self, index: usize) -> Result<MerkleWitness, ClaimStructureError> {
+        self.tree.witness(index)
+    }
+
+    pub fn nullifier_status(&self, nullifier: &Digest) -> Option<NullifierStatus> {
+        self.nullifiers.status(nullifier)
+    }
+
+    /// Registers a note leaf and its unique nullifier as one host-side update.
+    /// Cloning the small fixed state before mutation keeps either error from
+    /// leaving the tree and nullifier registry with different counts.
+    pub fn register_note(
+        &mut self,
+        leaf: Digest,
+        nullifier: Digest,
+        mut hash_pair: impl FnMut(&Digest, &Digest) -> Digest,
+    ) -> Result<usize, ClaimStructureError> {
+        if self.nullifiers.status(&nullifier).is_some() {
+            return Err(ClaimStructureError::DuplicateNullifier);
+        }
+        if self.nullifiers.len() == MAX_BIDS {
+            return Err(ClaimStructureError::NullifierRegistryFull);
+        }
+
+        let mut next_tree = self.tree.clone();
+        let index = next_tree.append(leaf, &mut hash_pair)?;
+        let mut next_nullifiers = self.nullifiers.clone();
+        next_nullifiers.register(nullifier)?;
+
+        self.tree = next_tree;
+        self.nullifiers = next_nullifiers;
+        Ok(index)
+    }
+
+    pub fn mark_spent(&mut self, nullifier: &Digest) -> Result<(), ClaimStructureError> {
+        self.nullifiers.mark_spent(nullifier)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,5 +528,71 @@ mod tests {
             Err(ClaimStructureError::NullifierRegistryFull)
         );
         assert_eq!(registry.len(), MAX_BIDS);
+    }
+
+    #[test]
+    fn claim_pool_registers_note_and_nullifier_as_one_update() {
+        let mut pool = ClaimPool::new([0xff; 32], test_hash_pair);
+        let leaf = test_leaf(1);
+        let nullifier = test_leaf(21);
+        let empty_root = *pool.root();
+
+        assert!(pool.is_empty());
+        assert_eq!(pool.register_note(leaf, nullifier, test_hash_pair), Ok(0));
+        assert_eq!(pool.leaf_count(), 1);
+        assert_eq!(
+            pool.nullifier_status(&nullifier),
+            Some(NullifierStatus::Registered)
+        );
+        let root_after_register = *pool.root();
+        assert_ne!(root_after_register, empty_root);
+
+        let witness = pool.witness(0).unwrap();
+        assert!(verify_merkle_witness(
+            &leaf,
+            &witness,
+            pool.leaf_count(),
+            pool.root(),
+            test_hash_pair
+        ));
+
+        assert_eq!(
+            pool.register_note(test_leaf(2), nullifier, test_hash_pair),
+            Err(ClaimStructureError::DuplicateNullifier)
+        );
+        assert_eq!(pool.leaf_count(), 1);
+        assert_eq!(pool.root(), &root_after_register);
+
+        pool.mark_spent(&nullifier).unwrap();
+        assert_eq!(
+            pool.nullifier_status(&nullifier),
+            Some(NullifierStatus::Spent)
+        );
+        assert_eq!(
+            pool.mark_spent(&nullifier),
+            Err(ClaimStructureError::NullifierAlreadySpent)
+        );
+    }
+
+    #[test]
+    fn claim_pool_capacity_failure_leaves_tree_and_registry_unchanged() {
+        let mut pool = ClaimPool::new([0xff; 32], test_hash_pair);
+        for value in 0..MAX_BIDS as u8 {
+            assert_eq!(
+                pool.register_note(test_leaf(value), test_leaf(value + 20), test_hash_pair),
+                Ok(usize::from(value))
+            );
+        }
+        let full_root = *pool.root();
+        let unused_nullifier = test_leaf(100);
+
+        assert_eq!(pool.leaf_count(), MAX_BIDS);
+        assert_eq!(
+            pool.register_note(test_leaf(101), unused_nullifier, test_hash_pair),
+            Err(ClaimStructureError::NullifierRegistryFull)
+        );
+        assert_eq!(pool.leaf_count(), MAX_BIDS);
+        assert_eq!(pool.root(), &full_root);
+        assert_eq!(pool.nullifier_status(&unused_nullifier), None);
     }
 }
