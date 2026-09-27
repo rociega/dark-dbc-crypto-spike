@@ -1,0 +1,21 @@
+[package]
+name = "dark-dbc-funding-script"
+version = "0.1.0"
+edition = "2021"
+default-run = "dark-dbc-funding-script"
+
+[[bin]]
+name = "dark-dbc-funding-script"
+path = "src/bin/main.rs"
+
+[dependencies]
+curve25519-dalek = "=4.1.3"
+dark-dbc-zk-relation = { path = "../relation" }
+sp1-build = "=5.0.0"
+sp1-core-executor = "=5.2.4"
+sp1-core-machine = "=5.2.4"
+sp1-stark = "=5.2.4"
+sha3 = "=0.10.9"
+
+[build-dependencies]
+sp1-build = "=5.0.0"

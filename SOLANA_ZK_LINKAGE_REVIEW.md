@@ -172,11 +172,24 @@ cross-field/group relation, or use a proof architecture that proves the
 Ristretto computation off-chain and verifies a succinct proof on-chain. No
 inspected candidate supplied this exact bridge or its compute measurements.
 
-An SP1-style guest that checks the Ristretto relation and emits a proof for a
-Solana-compatible verifier is a research direction, not a selected or validated
-design. It still must bind the exact accepted Token-2022 proof-context state,
-reject mutations, fit Solana transaction/compute limits, and receive
-independent cryptographic review. It does not solve the separate
+An SP1 v5 guest prototype now compiles with `sp1-zkvm`, `sp1-build`, and the
+installed `cargo-prove` CLI pinned to 5.0.0, plus `curve25519-dalek` 4.1.3.
+The local runner uses the SP1 core executor, core machine, and `sp1-stark`
+5.2.4 directly, without the proof-orchestration SDK. Compatibility of this
+guest/executor pair with a specific Solana verifier is not established. The
+shared `no_std` relation crate checks serialized Ristretto key/ciphertexts,
+the low/high amount split, and a test-only SHA-256 bid-commitment schema. The
+root host test runs that same relation against bytes produced by Solana's
+ElGamal SDK and checks mutations. A local run through the SP1 core executor
+accepts the valid fixture, commits the expected 384 bytes, and rejects a
+mutated amount, reporting 16,789,467 guest instructions. This is interpreter
+execution only: no proof has been generated, and compatibility with the pinned
+Solana verifier remains unconfirmed.
+
+This is still a feasibility experiment, not a validated design. A complete
+path must bind the exact accepted Token-2022 proof-context state, compare all
+public inputs against on-chain accounts, fit Solana transaction/compute limits,
+and receive independent cryptographic review. It does not solve the separate
 `H / s` threshold-DKG or vault-custody blockers.
 
 ## SP1 verifier-version gate

@@ -13,6 +13,10 @@
 use std::collections::HashMap;
 
 use curve25519_dalek::{ristretto::RistrettoPoint, scalar::Scalar};
+use dark_dbc_zk_relation::{
+    FundingStatement, FundingWitness, bid_commitment,
+    split_ciphertexts_match as serialized_split_ciphertexts_match, verify_funding_relation,
+};
 use sha2::{Digest, Sha512};
 use solana_zk_sdk::encryption::{
     elgamal::{ElGamalCiphertext, ElGamalPubkey, ElGamalSecretKey},
@@ -255,6 +259,8 @@ mod tests {
         let secret = ElGamalSecretKey::from(fixture.master_secret);
         let unrelated_secret = ElGamalSecretKey::from(Scalar::from(987_654_321u64));
         let unrelated_pubkey = ElGamalPubkey::new(&unrelated_secret);
+        let auditor_pubkey_bytes = fixture.aggregate_pubkey.to_bytes();
+        let unrelated_pubkey_bytes = unrelated_pubkey.to_bytes();
 
         for amount in [1, 65_535, 65_536, 123_456_789, MVP_MAX_BID] {
             let (low, high) = split_bid(amount);
@@ -314,6 +320,116 @@ mod tests {
                 amount,
                 &combined_opening,
                 &combined_ciphertext
+            ));
+            let opening_bytes = [low_opening.to_bytes(), high_opening.to_bytes()];
+            let ciphertext_bytes = [low_ciphertext.to_bytes(), high_ciphertext.to_bytes()];
+            assert!(serialized_split_ciphertexts_match(
+                &auditor_pubkey_bytes,
+                amount,
+                &opening_bytes,
+                &ciphertext_bytes
+            ));
+            assert!(!serialized_split_ciphertexts_match(
+                &unrelated_pubkey_bytes,
+                amount,
+                &opening_bytes,
+                &ciphertext_bytes
+            ));
+            assert!(!serialized_split_ciphertexts_match(
+                &auditor_pubkey_bytes,
+                amount + 1,
+                &opening_bytes,
+                &ciphertext_bytes
+            ));
+
+            let altered_low_opening = PedersenOpening::new(*low_opening.get_scalar() + Scalar::ONE);
+            let altered_opening_bytes = [altered_low_opening.to_bytes(), high_opening.to_bytes()];
+            assert!(!serialized_split_ciphertexts_match(
+                &auditor_pubkey_bytes,
+                amount,
+                &altered_opening_bytes,
+                &ciphertext_bytes
+            ));
+            let swapped_ciphertext_bytes = [high_ciphertext.to_bytes(), low_ciphertext.to_bytes()];
+            assert!(!serialized_split_ciphertexts_match(
+                &auditor_pubkey_bytes,
+                amount,
+                &opening_bytes,
+                &swapped_ciphertext_bytes
+            ));
+            let bid_randomness = [0x55; 32];
+            let claim_secret = [0x66; 32];
+            let mut statement = FundingStatement {
+                program_id: [0x11; 32],
+                auction_id: [0x22; 32],
+                bidder: [0x33; 32],
+                bid_commitment: [0; 32],
+                token_mint: [0x44; 32],
+                confidential_vault: [0x77; 32],
+                transfer_context_hash: [0x88; 32],
+                auditor_pubkey: auditor_pubkey_bytes,
+                ciphertext_low: ciphertext_bytes[0],
+                ciphertext_high: ciphertext_bytes[1],
+            };
+            let witness = FundingWitness {
+                amount,
+                bid_randomness,
+                claim_secret,
+                opening_low: opening_bytes[0],
+                opening_high: opening_bytes[1],
+            };
+            statement.bid_commitment = bid_commitment(
+                &statement.program_id,
+                &statement.auction_id,
+                &statement.bidder,
+                amount,
+                &bid_randomness,
+                &claim_secret,
+            );
+            assert!(verify_funding_relation(&statement, &witness));
+            assert_eq!(statement.public_values().len(), 384);
+            assert!(!verify_funding_relation(
+                &statement,
+                &FundingWitness {
+                    amount: amount + 1,
+                    ..witness
+                }
+            ));
+            assert!(!verify_funding_relation(
+                &statement,
+                &FundingWitness {
+                    claim_secret: [0x67; 32],
+                    ..witness
+                }
+            ));
+            assert!(!verify_funding_relation(
+                &statement,
+                &FundingWitness {
+                    opening_low: altered_low_opening.to_bytes(),
+                    ..witness
+                }
+            ));
+            assert!(!verify_funding_relation(
+                &FundingStatement {
+                    auditor_pubkey: unrelated_pubkey_bytes,
+                    ..statement
+                },
+                &witness
+            ));
+            assert!(!verify_funding_relation(
+                &FundingStatement {
+                    bidder: [0x99; 32],
+                    ..statement
+                },
+                &witness
+            ));
+            assert!(!verify_funding_relation(
+                &FundingStatement {
+                    ciphertext_low: swapped_ciphertext_bytes[0],
+                    ciphertext_high: swapped_ciphertext_bytes[1],
+                    ..statement
+                },
+                &witness
             ));
             assert_eq!(
                 combined_ciphertext.decrypt_u32(&secret),

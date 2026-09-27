@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "program",
+    "relation",
+    "script",
+]
+resolver = "2"

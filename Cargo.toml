@@ -11,6 +11,7 @@ sha2 = "=0.10.9"
 solana-zk-sdk = "=7.0.1"
 solana-zk-sdk-pod = "=0.1.2"
 spl-token-confidential-transfer-proof-generation = "=0.6.1"
+dark-dbc-zk-relation = { path = "dark-dbc-proof-spike/relation" }
 # Keep SDK 7's transitive Solana support crates on Rust 1.88-compatible patches.
 solana-address = "=2.5.0"
 solana-hash = "=4.2.0"
@@ -27,3 +28,4 @@ debug = 0
 
 [profile.test]
 debug = 0
+

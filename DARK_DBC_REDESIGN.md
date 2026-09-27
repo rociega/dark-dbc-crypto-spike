@@ -281,14 +281,27 @@ deterministic 2-of-3 aggregate-decryption arithmetic, candidate
 masked-inversion arithmetic, test-only Chaum-Pedersen decryption-share proofs,
 and bounded recovery of public `Q < 2^35`.
 
-The combined-ciphertext test now also uses a transparent host reference
-predicate: it recomputes the Pedersen commitment and decryption handle from a
-candidate amount, opening, and auditor key, and rejects mutations to each.
-This makes the ciphertext-opening witness relation executable as a test
-oracle, but it is not a zero-knowledge proof, does not consume serialized
-proof-context bytes, and has no on-chain verification path. An SP1 guest would
-still need to implement and benchmark the same relation over the exact
-Token-2022 encodings.
+The root SDK test now passes the actual serialized `PodElGamalPubkey` and
+low/high SDK ciphertext bytes into the same `no_std` relation crate used by an
+SP1 guest. It checks the ciphertext equations and a test-only SHA-256
+commitment schema, and rejects mutated amounts, openings, key, ciphertext
+order, claim secret, and bidder. The test-only commitment is not the selected
+production hash.
+
+The SP1 v5 guest prototype compiles and commits a fixed 384-byte public
+statement containing the program/auction/bidder, commitment, mint, vault,
+transfer-context digest, auditor key, and exact ciphertext pair. The amount,
+openings, bid randomness, and claim secret remain guest inputs and are not
+committed. The guest and build dependencies and installed `cargo-prove` CLI
+are pinned to 5.0.0; the local runner uses the SP1 core executor, core machine,
+and `sp1-stark` 5.2.4. The local core-executor run accepts the valid fixture,
+commits the expected 384 bytes, and rejects a mutated amount; it reports
+16,789,467 guest instructions. Matching this guest/executor pair to a Solana
+verifier remains unconfirmed. The guest does not authenticate Token-2022
+context by itself: an eventual on-chain verifier must compare every public
+field to the successfully accepted transfer and its proof-context state. No
+proof has been generated or verified on-chain, and there are no compute,
+transaction-size, or verifier-cost measurements yet.
 
 The spike also found a key-generation blocker: the SDK derives its ElGamal
 public key as `H / s` from secret scalar `s`, so public keys generated

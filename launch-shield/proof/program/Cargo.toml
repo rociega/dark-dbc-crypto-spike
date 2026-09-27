@@ -1,0 +1,8 @@
+[package]
+name = "launch-shield-proof-guest"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sp1-zkvm = "=5.0.0"
+launch-shield-proof-relation = { path = "../relation" }

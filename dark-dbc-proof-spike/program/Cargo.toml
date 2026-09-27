@@ -1,0 +1,8 @@
+[package]
+name = "dark-dbc-funding-guest"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sp1-zkvm = "=5.0.0"
+dark-dbc-zk-relation = { path = "../relation" }
