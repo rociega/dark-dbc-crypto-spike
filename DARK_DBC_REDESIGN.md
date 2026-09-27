@@ -318,12 +318,13 @@ custody. Those remain go/no-go blockers.
 
 The separate `protocol-spike::claim_structure` module now models the fixed
 depth-three tree and eight-slot nullifier registration/spend state. It checks
-host-side path construction, registered leaf count, mutation rejection, unique
-nullifier registration, and one-time spend transitions. Its tree accepts a
-caller-supplied pair hash; the SHA-256 test hash is only test scaffolding, not
-the selected circuit hash. The witness exposes its index and sibling path, and
-the registry does not derive nullifiers or prove note ownership. This is not an
-unlinkable claim proof, on-chain state machine, or redemption implementation.
+host-side path construction, incremental root updates, registered leaf count,
+mutation rejection, unique nullifier registration, and one-time spend
+transitions. Its tree accepts a caller-supplied pair hash; the SHA-256 test hash
+is only test scaffolding, not the selected circuit hash. The witness exposes its
+index and sibling path, and the registry does not derive nullifiers or prove
+note ownership. This is not an unlinkable claim proof, on-chain state machine,
+or redemption implementation.
 
 ## Cryptographic blockers to resolve
 
