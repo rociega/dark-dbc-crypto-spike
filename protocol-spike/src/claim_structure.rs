@@ -35,8 +35,10 @@ pub struct MerkleWitness {
 ///
 /// The caller supplies already-hashed leaf values, the empty-leaf value, and a
 /// pair-hash function. This keeps the host structure independent of the
-/// eventual circuit-compatible hash choice. The root alone does not bind
-/// `leaf_count`; callers must retain and validate the count alongside the root.
+/// eventual circuit-compatible hash choice; callers must use the same pair
+/// hash for construction, each append, and witness verification. The root alone
+/// does not bind `leaf_count`; callers must retain and validate the count
+/// alongside the root.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FixedDepthMerkleTree {
     leaf_count: usize,
