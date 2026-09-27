@@ -33,10 +33,10 @@ pub struct MerkleWitness {
 
 /// A depth-three Merkle tree over already-hashed note commitments.
 ///
-/// The caller supplies the leaf hash, empty-leaf value, and pair hash. This
-/// keeps the host structure independent of the eventual circuit-compatible
-/// hash choice. The root alone does not bind `leaf_count`; callers must retain
-/// and validate the count alongside the root.
+/// The caller supplies already-hashed leaf values, the empty-leaf value, and a
+/// pair-hash function. This keeps the host structure independent of the
+/// eventual circuit-compatible hash choice. The root alone does not bind
+/// `leaf_count`; callers must retain and validate the count alongside the root.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FixedDepthMerkleTree {
     leaf_count: usize,
@@ -100,6 +100,33 @@ impl FixedDepthMerkleTree {
             leaf_count: self.leaf_count,
             siblings,
         })
+    }
+
+    /// Appends one already-hashed note commitment and recomputes only its path
+    /// to the root. Returns the assigned leaf index.
+    pub fn append(
+        &mut self,
+        leaf: Digest,
+        mut hash_pair: impl FnMut(&Digest, &Digest) -> Digest,
+    ) -> Result<usize, ClaimStructureError> {
+        if self.leaf_count == CLAIM_TREE_CAPACITY || self.leaf_count == MAX_BIDS {
+            return Err(ClaimStructureError::TooManyLeaves);
+        }
+
+        let index = self.leaf_count;
+        self.levels[0][index] = leaf;
+        self.leaf_count += 1;
+
+        let mut position = index;
+        for level in 0..CLAIM_TREE_DEPTH {
+            let parent = position >> 1;
+            let left = self.levels[level][parent * 2];
+            let right = self.levels[level][parent * 2 + 1];
+            self.levels[level + 1][parent] = hash_pair(&left, &right);
+            position = parent;
+        }
+
+        Ok(index)
     }
 }
 
@@ -319,6 +346,39 @@ mod tests {
             &root,
             test_hash_pair
         ));
+    }
+
+    #[test]
+    fn incremental_appends_match_batch_roots_and_stop_at_eight() {
+        let leaves: Vec<_> = (0..CLAIM_TREE_CAPACITY as u8).map(test_leaf).collect();
+        let empty_leaf = [0xff; 32];
+        let mut tree = FixedDepthMerkleTree::new(&leaves[..1], empty_leaf, test_hash_pair).unwrap();
+
+        for (index, leaf) in leaves.iter().enumerate().skip(1) {
+            assert_eq!(tree.append(*leaf, test_hash_pair), Ok(index));
+            assert_eq!(tree.leaf_count(), index + 1);
+
+            let batch_tree =
+                FixedDepthMerkleTree::new(&leaves[..=index], empty_leaf, test_hash_pair).unwrap();
+            assert_eq!(tree.root(), batch_tree.root());
+
+            for (registered_index, registered_leaf) in leaves.iter().enumerate().take(index + 1) {
+                let witness = tree.witness(registered_index).unwrap();
+                assert!(verify_merkle_witness(
+                    registered_leaf,
+                    &witness,
+                    tree.leaf_count(),
+                    tree.root(),
+                    test_hash_pair
+                ));
+            }
+        }
+
+        assert_eq!(
+            tree.append(test_leaf(8), test_hash_pair),
+            Err(ClaimStructureError::TooManyLeaves)
+        );
+        assert_eq!(tree.leaf_count(), CLAIM_TREE_CAPACITY);
     }
 
     #[test]
