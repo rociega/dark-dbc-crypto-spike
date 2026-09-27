@@ -9,6 +9,12 @@ Shamir arithmetic, candidate masked-inversion arithmetic, test-only
 Chaum-Pedersen proofs for aggregate decryption shares, aggregate ciphertext
 decryption, and bounded discrete-log recovery.
 
+The `protocol-spike` also tests a fixed-depth-three Merkle-path helper and an
+eight-slot nullifier registry. SHA-256 is used only as a test hash for the tree
+plumbing; the production hash and circuit are unselected. These tests cover
+transparent paths, capacity, unique registration, and one-time state changes,
+not private membership or proof of note ownership.
+
 The separate `token-2022-program-test` harness initializes a
 confidential-transfer mint in Solana ProgramTest and reads back the exact
 auditor-key bytes. Its fixture key comes from a known test scalar; it is not a
@@ -80,7 +86,7 @@ threshold-decryption fixture still uses the full test secret to construct its
 key.
 
 Verification status as of 2026-09-27: the default host-side suite passes 7/7
-tests, `protocol-spike` passes 10/10, and the Token-2022 processor/context/
+tests, `protocol-spike` passes 16/16, and the Token-2022 processor/context/
 builder harness passes 4/4. Formatting checks pass for all four manifests; Clippy
 passes for the root, `protocol-spike`, and `token-2022-processor-test` crates.
 ProgramTest builds were attempted in the root package before isolation,
