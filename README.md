@@ -1,6 +1,22 @@
-# Dark DBC host-side cryptography spike
+# Launch Shield workspace: DBC auction and cryptographic feasibility spikes
 
-This is a feasibility test harness, not a deployable program. It uses the
+## Active target: sealed-bid Meteora DBC launch
+
+The active product direction is the practical bonded commit–reveal anti-sniping
+flow in [`launch-shield/README.md`](launch-shield/README.md): eight fixed-max
+escrowed bids, an SP1 proof linking each hidden bid to its commitment, public
+reveal after the window, one atomic DBC `swap2`, and pro-rata token claims.
+This is deliberately not the private-claims mixer explored by older research
+notes below. The Rust on-chain processor and proof relation now exist and their
+host tests pass; the Groth16 proof producer, SBF build, validator/DBC transaction
+tests, deployed DBC version match, and vkey hash are still unverified. Do not
+treat the code as deployed or production-ready.
+
+The material below records earlier feasibility spikes and remains useful
+cryptographic research, but it is not the current launch design.
+
+The root crate is a host-side feasibility test harness, not a deployable
+program. It uses the
 versioned Solana ElGamal SDK and Token-2022 confidential-transfer
 proof-generation helper to test low/high ciphertext combination, equivalence
 between that combined ciphertext and full-amount encryption with the
@@ -63,6 +79,23 @@ amounts and openings. This is a transparent witness check only, not a ZK proof;
 it does not prove an on-chain Token-2022 CPI accepts the context or link a bid
 record to a later claim.
 
+The direct-byte predicate now lives in a shared `no_std` relation crate that is
+also used by a pinned SP1 v5 guest. Root tests feed it real SDK-serialized
+auditor-key and low/high ciphertext bytes, alongside mutations to amount,
+opening, key, ciphertext order, claim secret, and bidder. The guest additionally
+checks a SHA-256 commitment schema that is explicitly test-only, then commits a
+384-byte public statement; private amount/openings/secrets are not in that
+statement. The SP1 guest compiles, and a local SP1 core-executor run accepts
+the valid fixture, commits the expected 384 public bytes, and rejects a
+mutated amount. That run reports 16,789,467 guest instructions; it is not a
+generated proof or an on-chain verification result. The future verifier must
+compare every public value to the accepted Token-2022 transfer and
+proof-context state.
+The guest is built with `cargo-prove`/`sp1-zkvm` 5.0.0, while this local
+interpreter run uses `sp1-core-executor` 5.2.4; it does not establish
+compatibility with the selected Solana verifier, and the instruction count is
+not a Solana compute-unit measurement.
+
 The masked-inversion test is a centrally simulated arithmetic transcript, not
 an MPC security test or DKG. The DLEQ test uses fixed nonces and does not
 implement a production proof encoding, verifier, or nonce generator. The
@@ -90,8 +123,10 @@ key.
 
 Verification status as of 2026-09-27: the default host-side suite passes 7/7
 tests, `protocol-spike` passes 19/19, and the Token-2022 processor/context/
-builder harness passes 4/4. Formatting checks pass for all four manifests; Clippy
-passes for the root, `protocol-spike`, and `token-2022-processor-test` crates.
+builder harness passes 4/4. The SP1 v5 guest compiles and passes the local
+core-executor test (valid fixture accepted; mutated amount rejected).
+Formatting checks pass for the root and SP1 workspace; Clippy passes for the
+root, `protocol-spike`, and `token-2022-processor-test` crates.
 ProgramTest builds were attempted in the root package before isolation,
 serially with debug info disabled and as a metadata-only check, but the
 operating system killed `rustc` while compiling `libsecp256k1` before the test
