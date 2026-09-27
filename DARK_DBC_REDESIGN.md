@@ -275,7 +275,7 @@ References:
 
 A standalone host-test crate now uses `solana-zk-sdk` 7.0.1,
 `solana-zk-sdk-pod` 0.1.2, confidential-transfer proof-generation 0.6.1, and
-SHA-512 for a test-only Fiat-Shamir transcript. Six tests pass for the SDK
+SHA-512 for a test-only Fiat-Shamir transcript. Seven tests pass for the SDK
 ciphertext-pair combination, `PodElGamalPubkey` encoding round-trip,
 deterministic 2-of-3 aggregate-decryption arithmetic, candidate
 masked-inversion arithmetic, test-only Chaum-Pedersen decryption-share proofs,
@@ -315,6 +315,15 @@ This is not a local-validator test. It does not establish that a real
 Token-2022 mint accepts the candidate key, verify the transfer proof-context
 state, provide malicious-secure DKG/share multiplication, or prove vault
 custody. Those remain go/no-go blockers.
+
+The separate `protocol-spike::claim_structure` module now models the fixed
+depth-three tree and eight-slot nullifier registration/spend state. It checks
+host-side path construction, registered leaf count, mutation rejection, unique
+nullifier registration, and one-time spend transitions. Its tree accepts a
+caller-supplied pair hash; the SHA-256 test hash is only test scaffolding, not
+the selected circuit hash. The witness exposes its index and sibling path, and
+the registry does not derive nullifiers or prove note ownership. This is not an
+unlinkable claim proof, on-chain state machine, or redemption implementation.
 
 ## Cryptographic blockers to resolve
 
