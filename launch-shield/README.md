@@ -190,18 +190,17 @@ the transaction's encoded top-level instruction count, rather than probing all
 for the valid five-instruction settlement sequence and for duplicate same-pool
 swap rejection.
 The SP1 guest ELF builds, and a metadata-only check of the host runner
-succeeds with the matching toolchain. The last SBF release build completed for
-`sbfv1` with Solana CLI 1.18.26 and platform-tools v1.52; the stripped
-`launch_shield_program.so` is 336,520 bytes (SHA-256
-`ef32a5add26e8eb2d673f20cb33350cc7319318c09738d64919bafbeafceb773`). Its
-`sp1-solana` and `groth16-solana` dependencies compile for SBF. This artifact
-predates the status-gate helper refactor above and must be rebuilt before
-release. A local validator smoke test could not complete: both startup
-attempts were OOM-killed under the
-environment's 1.6-GiB memory cap before RPC readiness, so validator loading and
-runtime behavior remain unverified. No vkey or Groth16 proof has been generated
-or verified. No DBC transaction simulation, deployed-version comparison,
-verifier compute measurement, or production deployment has been completed.
+succeeds with the matching toolchain. A fresh SBF release build of the current
+program source completed for `sbfv1` with Solana CLI 1.18.26 and platform-tools
+v1.52. The stripped `launch_shield_program.so` is 338,704 bytes (SHA-256
+`57ec0b3df861778e9f1549ddd8bb15a484326033ae5a57f3f78beb048478aee8`). Its
+`sp1-solana` and `groth16-solana` dependencies compile for SBF. This is a build
+artifact only: a local validator smoke test could not complete because both
+startup attempts were OOM-killed under the environment's 1.6-GiB memory cap
+before RPC readiness, so validator loading and runtime behavior remain
+unverified. No vkey or Groth16 proof has been generated or verified. No DBC
+transaction simulation, deployed-version comparison, verifier compute
+measurement, or production deployment has been completed.
 
 The first usable release still needs a proof-producing client and generated
 vkey; a pinned DBC deployment/IDL; SBF and transaction-size/compute validation;
