@@ -89,8 +89,18 @@ An alternative-runtime check did not remove the caller-CPI gap. LiteSVM's
 program-loading flow expects a compiled SBF program artifact, and this workspace
 has neither the SBF builder nor program ELF files. Mollusk is another candidate
 for a later SBF-based test, not a replacement for the host processor test.
-Given the pinned Token-2022/Solana-2.x stack, the most direct next runtime gate
-remains the isolated ProgramTest on a larger-memory runner.
+The installed Rust 1.88 toolchain has no `bpfel-unknown-none` target library,
+and no `cargo-build-sbf` command is installed. The available build-helper crate
+is from the newer 4.x toolchain line; its compatibility with the pinned
+Token-2022 9.0.0 / Solana 2.3 stack has not been established.
+
+The ProgramTest dependency tree is not a small feature toggle: its 2.3.13
+manifest directly depends on accounts-db, banks client/server, runtime, and
+SVM crates, and the secp256k1 precompile is part of the runtime dependency
+graph. There is no ProgramTest feature that removes this stack. Given these
+constraints, the most direct next runtime gate remains the isolated ProgramTest
+on a larger-memory runner, or a separately provisioned compatible SBF toolchain
+and prebuilt program artifacts for Mollusk/LiteSVM.
 
 Sources:
 
