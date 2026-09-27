@@ -16,7 +16,7 @@ use curve25519_dalek::{ristretto::RistrettoPoint, scalar::Scalar};
 use sha2::{Digest, Sha512};
 use solana_zk_sdk::encryption::{
     elgamal::{ElGamalCiphertext, ElGamalPubkey, ElGamalSecretKey},
-    pedersen::{G, H, PedersenOpening},
+    pedersen::{G, H, Pedersen, PedersenOpening},
 };
 use solana_zk_sdk_pod::encryption::elgamal::PodElGamalPubkey;
 use spl_token_confidential_transfer_proof_generation::{
@@ -38,6 +38,19 @@ fn encrypt_split_amount(pubkey: &ElGamalPubkey, amount: u64) -> ElGamalCiphertex
     let ciphertext_hi = pubkey.encrypt_u64(hi);
     try_combine_lo_hi_ciphertexts(&ciphertext_lo, &ciphertext_hi, 16)
         .expect("16-bit shift must be supported")
+}
+
+/// Transparent host reference for the witness relation a future guest must
+/// prove without revealing `amount` or `opening`.
+fn ciphertext_has_opening(
+    pubkey: &ElGamalPubkey,
+    amount: u64,
+    opening: &PedersenOpening,
+    ciphertext: &ElGamalCiphertext,
+) -> bool {
+    let expected_commitment = Pedersen::with(amount, opening);
+    let expected_handle = pubkey.decrypt_handle(opening);
+    ciphertext.commitment == expected_commitment && ciphertext.handle == expected_handle
 }
 
 fn ceil_sqrt(value: u64) -> u64 {
@@ -240,6 +253,8 @@ mod tests {
     fn combined_ciphertext_matches_full_amount_ciphertext_with_combined_opening() {
         let fixture = threshold_key_fixture();
         let secret = ElGamalSecretKey::from(fixture.master_secret);
+        let unrelated_secret = ElGamalSecretKey::from(Scalar::from(987_654_321u64));
+        let unrelated_pubkey = ElGamalPubkey::new(&unrelated_secret);
 
         for amount in [1, 65_535, 65_536, 123_456_789, MVP_MAX_BID] {
             let (low, high) = split_bid(amount);
@@ -255,6 +270,18 @@ mod tests {
                     .expect("the Token-2022 16-bit shift must be supported");
             let combined_opening = try_combine_lo_hi_openings(&low_opening, &high_opening, 16)
                 .expect("the Token-2022 16-bit opening shift must be supported");
+            assert!(ciphertext_has_opening(
+                &fixture.aggregate_pubkey,
+                low,
+                &low_opening,
+                &low_ciphertext
+            ));
+            assert!(ciphertext_has_opening(
+                &fixture.aggregate_pubkey,
+                high,
+                &high_opening,
+                &high_ciphertext
+            ));
             let full_amount_ciphertext = fixture
                 .aggregate_pubkey
                 .encrypt_with_u64(amount, &combined_opening);
@@ -262,6 +289,32 @@ mod tests {
             // The fixed openings are test fixtures. This checks the SDK's
             // ciphertext algebra, not a transfer proof or production binding.
             assert_eq!(combined_ciphertext, full_amount_ciphertext);
+            assert!(ciphertext_has_opening(
+                &fixture.aggregate_pubkey,
+                amount,
+                &combined_opening,
+                &combined_ciphertext
+            ));
+            assert!(!ciphertext_has_opening(
+                &fixture.aggregate_pubkey,
+                amount + 1,
+                &combined_opening,
+                &combined_ciphertext
+            ));
+            let altered_opening =
+                PedersenOpening::new(*combined_opening.get_scalar() + Scalar::ONE);
+            assert!(!ciphertext_has_opening(
+                &fixture.aggregate_pubkey,
+                amount,
+                &altered_opening,
+                &combined_ciphertext
+            ));
+            assert!(!ciphertext_has_opening(
+                &unrelated_pubkey,
+                amount,
+                &combined_opening,
+                &combined_ciphertext
+            ));
             assert_eq!(
                 combined_ciphertext.decrypt_u32(&secret),
                 Some(amount),
