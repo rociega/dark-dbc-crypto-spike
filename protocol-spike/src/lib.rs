@@ -1,8 +1,13 @@
 //! Host-side reference arithmetic for the fixed-eight Dark DBC allocation.
 //!
-//! This crate deliberately does not implement commitments, proofs,
-//! encryption, Token-2022 CPIs, or DBC settlement. The production program
-//! must prove this relation in the selected ZK system and verify it on-chain.
+//! This crate deliberately does not implement production commitments, proofs,
+//! encryption, Token-2022 CPIs, or DBC settlement. Its claim-structure module
+//! checks only fixed-depth Merkle-path and nullifier-state invariants; it does
+//! not hide membership or prove note ownership. The production program must
+//! prove the required relations in the selected ZK system and verify them
+//! on-chain.
+
+pub mod claim_structure;
 
 pub const MAX_BIDS: usize = 8;
 /// Token-2022 confidential transfer currently splits an amount into 16-bit
