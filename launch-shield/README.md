@@ -226,22 +226,31 @@ the 200-byte public statement, while a mutated amount exited nonzero. This does
 not generate or verify a Groth16 proof. The full `sp1-prover` build remains
 blocked by the dependency firewall described below.
 
-A prior SBF release build completed for `sbfv1`
-with Solana CLI 1.18.26 and platform-tools
-v1.52. The stripped `launch_shield_program.so` is 338,704 bytes (SHA-256
-`57ec0b3df861778e9f1549ddd8bb15a484326033ae5a57f3f78beb048478aee8`). Its
-`sp1-solana` and `groth16-solana` dependencies compiled for SBF in that prior
-pre-migration build; it does not validate the SP1 6.8.1 verifier. The active
-shell does not have `solana` or `solana-test-validator` on
-`PATH`, and no validator integration harness is present in the active
-workspace. Earlier validator startup attempts were OOM-killed under a 1.6-GiB
-limit. Validator loading, runtime behavior, and Devnet settlement remain
-unverified. No DBC transaction simulation, deployed-version source match,
-verifier compute measurement, or production deployment has been completed.
+A prior SBF release build completed for `sbfv1` with Solana CLI 1.18.26 and
+platform-tools v1.52. Its stripped `launch_shield_program.so` was 338,704
+bytes (SHA-256
+`57ec0b3df861778e9f1549ddd8bb15a484326033ae5a57f3f78beb048478aee8`). That
+was a pre-migration build and does not validate the SP1 6.8.1 verifier.
 
-The first usable release still needs a generated vkey; a pinned DBC
-deployment/IDL; SBF and transaction-size/compute validation; and validator
-tests for escrow, settlement rollback, cancellation, and claims.
+A current-source SBF release build completed with Agave CLI 4.3.0 and
+platform-tools v1.57. The stripped `launch_shield_program.so` is 321,064
+bytes (SHA-256
+`ab0e74f0e074f5c8c47b9898e0786a8fe091ad10497343f385dad3ce8bb01115`).
+Agave's `--patch-binaries-for-nix true` path panics in this Replit image
+because its generated Nix dependency bundle lacks `nix-support/dynamic-linker`;
+the build passed with `--patch-binaries-for-nix false`. This validates SBF
+compilation only.
+
+The Agave 4.3.0 local validator cannot start in this environment: its `io_uring`
+probe returns `Operation not permitted`, then startup panics because
+`io_uring_supported()` is false. The program has not been loaded into a
+validator here. Runtime behavior and Devnet settlement remain unverified. No
+DBC transaction simulation, deployed-version source match, verifier compute
+measurement, or production deployment has been completed.
+
+The first usable release still needs a vkey and proof generated for the actual
+guest; a pinned DBC deployment/IDL; transaction-size/compute validation; and
+validator tests for escrow, settlement rollback, cancellation, and claims.
 The current MVP only supports classic SPL quote tokens, reveals bid amounts
 after close, and has an eight-bid cap.
 
@@ -257,8 +266,10 @@ than relying on those historical findings.
 
 The optional CPU prover also remains blocked: SP1 6.8.1's native FFI pins
 `golang.org/x/crypto v0.45.0`, which the package firewall rejects for a critical
-advisory. An isolated copy of the FFI built with v0.57.0, but the complete
-`sp1-prover` workspace check did not finish, and no dependency override was
-committed. Do not bypass the firewall or update this transitive dependency in
-isolation; complete a coordinated SP1 dependency update and verifier validation
-before generating a release vkey or proof.
+advisory. As of 2026-09-28, crates.io still lists SP1 SDK, zkVM, and build
+version 6.8.1 as their latest stable releases, so no coordinated newer SP1
+release is available. An isolated copy of the FFI built with v0.57.0, but the
+complete `sp1-prover` workspace check did not finish, and no dependency
+override was committed. Do not bypass the firewall or update this transitive
+dependency in isolation; wait for a coordinated SP1 dependency update and
+validate the verifier before generating a release vkey or proof.
