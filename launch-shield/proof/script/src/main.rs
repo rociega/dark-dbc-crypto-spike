@@ -1,10 +1,10 @@
 use launch_shield_proof_relation::{bid_commitment, BidStatement, BidWitness};
-use sp1_build::include_elf;
-use sp1_core_executor::{Executor, Program};
-use sp1_core_machine::io::SP1Stdin;
-use sp1_stark::SP1CoreOpts;
+use sp1_sdk::{
+    blocking::{Prover, ProverClient, SP1Stdin},
+    include_elf, Elf,
+};
 
-const GUEST_ELF: &[u8] = include_elf!("launch-shield-proof-guest");
+const GUEST_ELF: Elf = include_elf!("launch-shield-proof-guest");
 
 fn fixture() -> (BidStatement, BidWitness) {
     let witness = BidWitness {
@@ -38,19 +38,20 @@ fn stdin_for(statement: &BidStatement, witness: &BidWitness) -> SP1Stdin {
     stdin
 }
 
-fn execute(stdin: &SP1Stdin) -> Result<(Vec<u8>, u64), Box<dyn std::error::Error>> {
-    let mut executor = Executor::new(Program::from(GUEST_ELF)?, SP1CoreOpts::default());
-    executor.write_vecs(&stdin.buffer);
-    executor.run_fast()?;
+fn execute(stdin: SP1Stdin) -> Result<(Vec<u8>, u64, u64), Box<dyn std::error::Error>> {
+    let client = ProverClient::builder().light().build();
+    let (public_values, report) = client.execute(GUEST_ELF, stdin).run()?;
     Ok((
-        executor.state.public_values_stream.clone(),
-        executor.report.total_instruction_count(),
+        public_values.as_slice().to_vec(),
+        report.total_instruction_count(),
+        report.exit_code,
     ))
 }
 
 fn main() {
     let (statement, witness) = fixture();
-    let valid = execute(&stdin_for(&statement, &witness)).expect("valid bid must execute");
+    let valid = execute(stdin_for(&statement, &witness)).expect("valid bid must execute");
+    assert_eq!(valid.2, 0, "valid bid must exit successfully");
     assert_eq!(valid.0, statement.public_values());
     println!(
         "valid bid relation executed; public bytes={}, guest instructions={}",
@@ -60,8 +61,10 @@ fn main() {
 
     let mut invalid = witness;
     invalid.amount += 1;
+    let invalid = execute(stdin_for(&statement, &invalid))
+        .expect("mutated bid execution must report its exit code");
     assert!(
-        execute(&stdin_for(&statement, &invalid)).is_err(),
+        invalid.2 != 0,
         "mutated amount must be rejected"
     );
     println!("mutated amount rejected by local SP1 executor");

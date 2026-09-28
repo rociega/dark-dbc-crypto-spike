@@ -21,8 +21,8 @@ use crate::{
     error::{ShieldError, ShieldResult},
     instruction::{self, ShieldInstruction},
     state::{
-        Auction, Bid, GlobalConfig, AUCTION_COMMITS, AUCTION_LEN, AUCTION_REVEALS,
-        AUCTION_CANCELLED, AUCTION_SETTLED, AUCTION_SETTLING, BID_CANCELLED, BID_CLAIMED,
+        Auction, Bid, GlobalConfig, AUCTION_CANCELLED, AUCTION_COMMITS, AUCTION_LEN,
+        AUCTION_REVEALS, AUCTION_SETTLED, AUCTION_SETTLING, BID_CANCELLED, BID_CLAIMED,
         BID_COMMITTED, BID_FORFEITED, BID_LEN, BID_REVEALED, CONFIG_LEN,
     },
 };
@@ -90,8 +90,7 @@ fn initialize_config(
     verify_upgrade_authority(program_id, authority, program_data_account)?;
     commitment::parse_vkey_hash(&vkey_hash).map_err(|_| ShieldError::InvalidVkeyHash)?;
 
-    let (expected_config, bump) =
-        Pubkey::find_program_address(&[b"global-config"], program_id);
+    let (expected_config, bump) = Pubkey::find_program_address(&[b"global-config"], program_id);
     require_key(config_account, &expected_config)?;
     if config_account.owner != &solana_program::system_program::id() {
         return Err(ShieldError::InvalidAccount.into());
@@ -124,17 +123,14 @@ fn verify_upgrade_authority(
     let expected_program_data =
         solana_program::bpf_loader_upgradeable::get_program_data_address(program_id);
     require_key(program_data, &expected_program_data)?;
-    require_owner(
-        program_data,
-        &solana_program::bpf_loader_upgradeable::id(),
-    )?;
+    require_owner(program_data, &solana_program::bpf_loader_upgradeable::id())?;
     let data = program_data.try_borrow_data()?;
     let metadata_len = UpgradeableLoaderState::size_of_programdata_metadata();
     if data.len() < metadata_len {
         return Err(ShieldError::InvalidAccount.into());
     }
-    let loader_state: UpgradeableLoaderState = bincode::deserialize(&data[..metadata_len])
-        .map_err(|_| ShieldError::InvalidAccount)?;
+    let loader_state: UpgradeableLoaderState =
+        bincode::deserialize(&data[..metadata_len]).map_err(|_| ShieldError::InvalidAccount)?;
     match loader_state {
         UpgradeableLoaderState::ProgramData {
             upgrade_authority_address: Some(upgrade_authority),
@@ -340,13 +336,8 @@ fn commit_bid(
     let vkey_hash = config
         .vkey_hash_str()
         .map_err(|_| ShieldError::InvalidVkeyHash)?;
-    sp1_solana::verify_proof(
-        proof,
-        supplied_public_values,
-        vkey_hash,
-        sp1_solana::GROTH16_VK_5_0_0_BYTES,
-    )
-    .map_err(|_| ShieldError::InvalidProof)?;
+    crate::sp1_v6::verify_proof(proof, supplied_public_values, vkey_hash)
+        .map_err(|_| ShieldError::InvalidProof)?;
 
     transfer_checked(
         token_program,
@@ -360,7 +351,11 @@ fn commit_bid(
     )?;
     invoke(
         &system_instruction::transfer(bidder.key, auction_account.key, auction.bond_lamports),
-        &[bidder.clone(), auction_account.clone(), system_program.clone()],
+        &[
+            bidder.clone(),
+            auction_account.clone(),
+            system_program.clone(),
+        ],
     )?;
 
     let bump_seed = [bid_bump];
@@ -480,11 +475,7 @@ fn reveal_bid(
             vault_authority,
             refund,
             unpack_mint(quote_mint_account)?.decimals,
-            Some(&[
-                b"vault",
-                auction_account.key.as_ref(),
-                &bump_seed,
-            ]),
+            Some(&[b"vault", auction_account.key.as_ref(), &bump_seed]),
         )?;
     }
 
@@ -539,11 +530,7 @@ fn forfeit_unrevealed(program_id: &Pubkey, accounts: &[AccountInfo<'_>]) -> Shie
         return Err(ShieldError::InvalidState.into());
     }
     let (expected_bid, _) = Pubkey::find_program_address(
-        &[
-            b"bid",
-            auction_account.key.as_ref(),
-            bid.bidder.as_ref(),
-        ],
+        &[b"bid", auction_account.key.as_ref(), bid.bidder.as_ref()],
         program_id,
     );
     require_key(bid_account, &expected_bid)?;
@@ -634,8 +621,7 @@ fn prepare_settlement(program_id: &Pubkey, accounts: &[AccountInfo<'_>]) -> Shie
     let (expected_vault_authority, vault_bump) =
         dbc::vault_authority(program_id, auction_account.key);
     require_key(vault_authority, &expected_vault_authority)?;
-    if creator_input_account.key
-        != &dbc::associated_token_address(creator.key, &auction.quote_mint)
+    if creator_input_account.key != &dbc::associated_token_address(creator.key, &auction.quote_mint)
         || base_output_vault.key
             != &dbc::associated_token_address(&expected_vault_authority, base_mint_account.key)
     {
@@ -714,11 +700,7 @@ fn prepare_settlement(program_id: &Pubkey, accounts: &[AccountInfo<'_>]) -> Shie
         vault_authority,
         auction.total_revealed_amount,
         quote_mint.decimals,
-        Some(&[
-            b"vault",
-            auction_account.key.as_ref(),
-            &[vault_bump],
-        ]),
+        Some(&[b"vault", auction_account.key.as_ref(), &[vault_bump]]),
     )?;
 
     auction.status = AUCTION_SETTLING;
@@ -811,8 +793,7 @@ fn claim(program_id: &Pubkey, accounts: &[AccountInfo<'_>]) -> ShieldResult {
     {
         return Err(ShieldError::InvalidTokenAccount.into());
     }
-    let (expected_vault_authority, bump) =
-        dbc::vault_authority(program_id, auction_account.key);
+    let (expected_vault_authority, bump) = dbc::vault_authority(program_id, auction_account.key);
     require_key(vault_authority, &expected_vault_authority)?;
     verify_token_account(
         base_output_vault,
@@ -839,11 +820,7 @@ fn claim(program_id: &Pubkey, accounts: &[AccountInfo<'_>]) -> ShieldResult {
             vault_authority,
             allocation,
             unpack_mint(base_mint_account)?.decimals,
-            Some(&[
-                b"vault",
-                auction_account.key.as_ref(),
-                &[bump],
-            ]),
+            Some(&[b"vault", auction_account.key.as_ref(), &[bump]]),
         )?;
     }
     bid.status = BID_CLAIMED;
@@ -1072,8 +1049,7 @@ fn create_program_account<'info>(
             // then fails because the address is no longer empty, so initialize
             // the pre-funded system account in place instead.
             if rent_top_up > 0 {
-                let fund_ix =
-                    system_instruction::transfer(payer.key, target.key, rent_top_up);
+                let fund_ix = system_instruction::transfer(payer.key, target.key, rent_top_up);
                 invoke(
                     &fund_ix,
                     &[payer.clone(), target.clone(), system_program.clone()],
@@ -1197,7 +1173,9 @@ fn account<'a, 'info>(
     accounts: &'a [AccountInfo<'info>],
     index: usize,
 ) -> Result<&'a AccountInfo<'info>, ProgramError> {
-    accounts.get(index).ok_or(ProgramError::NotEnoughAccountKeys)
+    accounts
+        .get(index)
+        .ok_or(ProgramError::NotEnoughAccountKeys)
 }
 
 fn require_signer(account: &AccountInfo<'_>) -> ShieldResult {
@@ -1330,11 +1308,7 @@ mod tests {
             0,
         );
         assert_eq!(
-            verify_upgrade_authority(
-                &program_id,
-                &wrong_authority_info,
-                &program_data_info
-            ),
+            verify_upgrade_authority(&program_id, &wrong_authority_info, &program_data_info),
             Err(ShieldError::Unauthorized.into())
         );
     }
@@ -1358,9 +1332,7 @@ mod tests {
 
     #[test]
     fn pro_rata_allocations_floor_round_without_exceeding_total_output() {
-        let allocations = [10, 20, 70].map(|amount| {
-            pro_rata_allocation(amount, 17, 100).unwrap()
-        });
+        let allocations = [10, 20, 70].map(|amount| pro_rata_allocation(amount, 17, 100).unwrap());
         let total_allocated = allocations.iter().sum::<u64>();
         assert_eq!(allocations, [1, 3, 11]);
         assert_eq!(total_allocated, 15);

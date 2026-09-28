@@ -1,9 +1,13 @@
-use sp1_sdk::{include_elf, HashableKey, Prover, ProverClient};
+use sp1_sdk::{
+    blocking::{Prover, ProverClient},
+    include_elf, HashableKey,
+};
 
-const GUEST_ELF: &[u8] = include_elf!("launch-shield-proof-guest");
+const GUEST_ELF: sp1_sdk::Elf = include_elf!("launch-shield-proof-guest");
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ProverClient::builder().cpu().build();
-    let (_proving_key, verifying_key) = client.setup(GUEST_ELF);
-    println!("{}", verifying_key.bytes32());
+    let proving_key = client.setup(GUEST_ELF.into())?;
+    println!("{}", proving_key.verifying_key().bytes32());
+    Ok(())
 }

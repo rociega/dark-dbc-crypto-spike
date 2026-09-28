@@ -55,15 +55,31 @@ DBC swap2 ExactIn (top-level; Instructions sysvar as one remaining account)
 Launch Shield finalize_settlement
 ```
 
-The source inspection used Meteora's public repository at commit
-`3b540e94b5b20ba37733de6e25f58522a0cd8961`, including its `swap2` account
-definition and release IDL. The parser requires the no-referral sentinel,
-Anchor event-CPI accounts, and the single Instructions sysvar remaining account.
-That is 15 account metas through the DBC program account (including the
-optional-referral sentinel), followed by the Instructions sysvar as meta 16.
-This is not proof that the deployed program matches that source. Before
-deployment, pin and compare the deployed DBC build and regenerate the
-instruction bindings from that matching source.
+The source review used Meteora's public DBC 0.2.1 commit
+`f552f20aa3c1c7631427c3827aeea7c58b902813`. Its `swap2` source file is
+identical to the reviewed 0.2.0 revision. The SPL initializer keeps the same
+account fields and order; its first six accounts are config, pool authority,
+creator, base mint, quote mint, and pool. Release 0.2.1 adds initializer runtime
+checks for quote-mint token badges and rejects deprecated rate-limiter and
+Meteora DAMM migration settings. The repository does not include a DBC 0.2.1
+release IDL, so this source review is not a regenerated 0.2.1 IDL binding.
+
+The parser requires the no-referral sentinel, Anchor event-CPI accounts, and
+the single Instructions sysvar remaining account. That is 15 account metas
+through the DBC program account (including the optional-referral sentinel),
+followed by the Instructions sysvar as meta 16. This source review does not
+prove either deployed program matches that source. Before deployment, pin and
+compare the target cluster's deployed DBC build and regenerate the instruction
+bindings from that matching source. Use a DBC config accepted by the deployed
+initializer; an incompatible config can make settlement fail atomically.
+
+Auction creation currently checks that the DBC config account is owned by the
+DBC program, but it does not decode that config or prevalidate its quote mint
+and active settings. A bad or changed config can therefore make settlement
+fail after bids are escrowed. On cancellation, only revealed bids are eligible
+for refunds; unrevealed deposits and bonds remain forfeitable to the creator.
+For a multi-creator production deployment, use a governed config allowlist or
+version-aware preflight before accepting bids.
 
 ### Live DBC deployment preflight
 
@@ -80,7 +96,8 @@ deployed executable bytes differ:
 Hashes cover the executable bytes after the upgradeable-loader metadata. These
 observations do not identify either binary's source revision; each target
 cluster's DBC compatibility still needs an exact build/source match and runtime
-settlement test.
+settlement test. A fresh read-only Devnet check on 2026-09-28 still matches the
+recorded Devnet slot, executable length, and hash.
 
 To repeat the read-only Devnet fingerprint check, run
 `python3 launch-shield/scripts/check_dbc_devnet.py`. It uses
@@ -100,7 +117,7 @@ uses `vault`. The code is in `program/src/`.
 |---:|---|---|
 | 0 | `initialize_config` | 66 ASCII bytes: SP1 vkey hash `0x` + 64 hex digits |
 | 1 | `initialize_auction` | auction ID `[32]`, then commit slots, reveal slots, max bid, SOL bond, minimum-output numerator, minimum-output denominator (`u64 LE` each) |
-| 2 | `commit_bid` | commitment `[32]`, 260-byte SP1 Groth16 proof, 200-byte public statement |
+| 2 | `commit_bid` | commitment `[32]`, 356-byte SP1 6.8.1 Groth16 proof, 200-byte public statement |
 | 3 | `reveal_bid` | amount (`u64 LE`), salt `[32]` |
 | 4 | `forfeit_unrevealed` | empty |
 | 5 | `prepare_settlement` | empty |
@@ -108,6 +125,11 @@ uses `vault`. The code is in `program/src/`.
 | 7 | `claim` | empty |
 | 8 | `cancel_unsettled` | empty |
 | 9 | `refund_cancelled_bid` | empty |
+
+The SP1 6.8.1 proof envelope is 356 bytes: a 4-byte verifier-key selector,
+32-byte exit code, 32-byte SP1 v6 verifier-key root, 32-byte nonce, and the
+256-byte Groth16 proof. The on-chain verifier pins SP1 circuit 6.1.0's
+492-byte Groth16 key and checks its SHA-256 selector and the expected root.
 
 The 200-byte proof statement is exactly
 `program_id || auction_id || bidder || commitment || quote_mint || quote_vault
@@ -151,10 +173,9 @@ cap, up to seven base-token base units can remain as rounding dust in the
 program vault; the MVP does not currently sweep that dust.
 
 `initialize_config` is one-shot, requires the deployed program's upgrade
-authority to sign, and stores the supplied verifier hash. The hash is not yet
-generated or pinned in this workspace. Do not expose a deployment to users
-until the intended SP1 vkey is independently produced, verified against the
-guest ELF, and configured by the trusted deployer.
+authority to sign, and stores the supplied verifier hash. The vkey must be
+generated from the SP1 6.8.1 guest ELF and matched to the deployed program
+before configuring this one-shot value.
 
 Program-owned config, auction, and bid PDAs handle third-party pre-funding.
 When a target system account already has lamports, the program tops it up to
@@ -163,7 +184,8 @@ which would fail for an already-funded address.
 
 ## Proof tooling
 
-The optional SP1 host binaries are in `proof/script` and are intended to run as:
+The optional SP1 6.8.1 host binaries are in `proof/script` and are intended to
+run as:
 
 ```sh
 cargo run --manifest-path launch-shield/proof/Cargo.toml \
@@ -172,17 +194,11 @@ cargo run --manifest-path launch-shield/proof/Cargo.toml \
   -p launch-shield-proof-runner --features sp1-prover --bin launch-shield-prove
 ```
 
-These use SP1 5.0.0 and need its matching Succinct Rust toolchain installed
-(`cargo prove install-toolchain` after installing the matching `cargo-prove`).
-The prover reads the amount and salt only from stdin, verifies its generated
-Groth16 proof locally, and emits the commitment, proof, public values, and vkey
-hash. On 2026-09-27 the full host runner compiled and launched, but the run was
-OOM-killed under this environment's 1.6-GiB cgroup memory limit before it
-emitted proof or vkey output (`oom_kill` incremented). No vkey hash or Groth16
-proof has been generated here; rerunning unchanged in this environment is
-expected to hit the same memory limit. Treat both commands as unverified until
-they complete. Do not put bid amounts or salts in command-line arguments or
-shell history.
+These use SP1 6.8.1 and circuit version 6.1.0. The prover reads amount and salt
+from stdin; do not put bid values or salts in command-line arguments or shell
+history. Proof generation, host-side verification, and the matching Solana
+verifier are separate release gates; a successful guest build alone does not
+establish on-chain compatibility.
 
 ## Verification and remaining gates
 
@@ -193,7 +209,7 @@ cargo test --manifest-path launch-shield/program/Cargo.toml
 cargo test --manifest-path launch-shield/proof/Cargo.toml -p launch-shield-proof-relation
 ```
 
-The on-chain crate's 25 unit tests and the shared proof-relation crate's 8 tests
+The on-chain crate's 28 unit tests and the shared proof-relation crate's 8 tests
 pass. Host-side tests also cover cancellation deadline/settlement guards,
 claim eligibility, and cancelled-refund eligibility through the same pure
 validation helpers used by the instruction handlers; they do not simulate
@@ -204,22 +220,45 @@ for the valid five-instruction settlement sequence and for duplicate same-pool
 swap rejection. They also bind the initialization instruction to its expected
 program/config/mints/pool, bind finalization to its immediately preceding swap,
 and check that pro-rata rounding cannot allocate more than the output total.
-The SP1 guest ELF and full host proof runner compile with the matching toolchain;
-the local CPU Groth16 run is blocked by the memory limit described above. A
-fresh SBF release build of the current program source completed for `sbfv1`
+The SP1 6.8.1 guest ELF and local `sp1-executor` runner compile with the matching
+toolchain. The runner was exercised using synthetic data: a valid bid produced
+the 200-byte public statement, while a mutated amount exited nonzero. This does
+not generate or verify a Groth16 proof. The full `sp1-prover` build remains
+blocked by the dependency firewall described below.
+
+A prior SBF release build completed for `sbfv1`
 with Solana CLI 1.18.26 and platform-tools
 v1.52. The stripped `launch_shield_program.so` is 338,704 bytes (SHA-256
 `57ec0b3df861778e9f1549ddd8bb15a484326033ae5a57f3f78beb048478aee8`). Its
-`sp1-solana` and `groth16-solana` dependencies compile for SBF. This is a build
-artifact only: a local validator smoke test could not complete because both
-startup attempts were OOM-killed under the environment's 1.6-GiB memory cap
-before RPC readiness, so validator loading and runtime behavior remain
-unverified. No vkey or Groth16 proof has been generated or verified. No DBC
-transaction simulation, deployed-version comparison, verifier compute
-measurement, or production deployment has been completed.
+`sp1-solana` and `groth16-solana` dependencies compiled for SBF in that prior
+pre-migration build; it does not validate the SP1 6.8.1 verifier. The active
+shell does not have `solana` or `solana-test-validator` on
+`PATH`, and no validator integration harness is present in the active
+workspace. Earlier validator startup attempts were OOM-killed under a 1.6-GiB
+limit. Validator loading, runtime behavior, and Devnet settlement remain
+unverified. No DBC transaction simulation, deployed-version source match,
+verifier compute measurement, or production deployment has been completed.
 
-The first usable release still needs a proof-producing client and generated
-vkey; a pinned DBC deployment/IDL; SBF and transaction-size/compute validation;
-and validator tests for escrow, settlement rollback, cancellation, and claims.
+The first usable release still needs a generated vkey; a pinned DBC
+deployment/IDL; SBF and transaction-size/compute validation; and validator
+tests for escrow, settlement rollback, cancellation, and claims.
 The current MVP only supports classic SPL quote tokens, reveals bid amounts
 after close, and has an eight-bid cap.
+
+### Security scan blocker (2026-09-28)
+
+The previous SP1 5.x proof stack had a high-severity `p3-challenger`
+advisory (`GHSA-vj64-rjf3-w3v7`). The migration target is SP1 6.8.1, whose
+upstream dependency set includes the reported fixed `0.4.3-succinct` release.
+Treat the advisory as unresolved until the regenerated proof stack, vkey, and
+on-chain verifier pass the tests above. Security scans also reported old
+vulnerable packages from preserved snapshots; verify the active lockfile rather
+than relying on those historical findings.
+
+The optional CPU prover also remains blocked: SP1 6.8.1's native FFI pins
+`golang.org/x/crypto v0.45.0`, which the package firewall rejects for a critical
+advisory. An isolated copy of the FFI built with v0.57.0, but the complete
+`sp1-prover` workspace check did not finish, and no dependency override was
+committed. Do not bypass the firewall or update this transitive dependency in
+isolation; complete a coordinated SP1 dependency update and verifier validation
+before generating a release vkey or proof.

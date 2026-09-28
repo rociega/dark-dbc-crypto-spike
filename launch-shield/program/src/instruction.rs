@@ -1,6 +1,6 @@
 use solana_program::program_error::ProgramError;
 
-pub const SP1_PROOF_LEN: usize = 260;
+pub const SP1_PROOF_LEN: usize = 356;
 pub const BID_PUBLIC_VALUES_LEN: usize = 200;
 
 pub enum ShieldInstruction {
