@@ -80,12 +80,14 @@ with the PDA seeds; runtime behavior is still unverified.
 
 A read-only Devnet check on 2026-09-29 still matched the recorded program
 fingerprint in `launch-shield/README.md`. Rebuilding the reviewed DBC 0.2.1
-commit with Agave 4.3.0/platform-tools 1.57 and SBF arch v2 produced a 1,506,544
-byte artifact with SHA-256
-`a10f0f93c3a0419a5078446a9c3772d13ddbf0a8ed6b9f11d792e792d083579a`, which
-does not match the recorded Devnet executable. The architecture/build settings
-or source revision may differ; the deployed source remains unidentified, so
-runtime CPI compatibility is still unverified.
+commit with Agave 4.3.0/platform-tools 1.57 produced distinct SBF artifacts:
+arch v1 was 1,499,816 bytes with SHA-256
+`dcab965f511e92f41df935ded3232e6a4c8d9d0662269078e071660a9b1c29df`, and
+arch v2 was 1,506,544 bytes with SHA-256
+`a10f0f93c3a0419a5078446a9c3772d13ddbf0a8ed6b9f11d792e792d083579a`. Neither
+matches the recorded Devnet executable. The build settings or source revision
+may differ; the deployed source remains unidentified, so runtime CPI
+compatibility is still unverified.
 
 The configured total bid amount is still authority-provided at initialization.
 Token-2022's withdrawal proof establishes that the vault can cover the
@@ -138,9 +140,9 @@ env -u LD_AUDIT CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 \
 ```
 
 These cover state, parsing, verifier, and DBC instruction-construction
-behavior—not Solana runtime/CPI behavior. The two DBC instruction/PDA tests
-passed on 2026-09-29. The on-chain crate successfully built for SBF with Agave
-4.3.0 and platform-tools 1.57:
+behavior—not Solana runtime/CPI behavior. All 15 on-chain host tests passed on
+2026-09-29. The on-chain crate successfully built for SBF with Agave 4.3.0 and
+platform-tools 1.57:
 
 ```sh
 PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH" \
