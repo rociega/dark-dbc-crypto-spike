@@ -63,9 +63,25 @@ The on-chain code contains the Token-2022 pending-balance and Meteora DBC
 `swap2` settlement path, including output-vault delta accounting. That path is
 deliberately fail-closed: both `FundBid` and `Settle` return an error until a
 reviewed proof binds the public aggregate to every accepted private bid. No
-funding or swap is currently possible through this prototype. The upstream DBC
-IDL includes a Token-2022 initializer and Token-2022 swaps; compatibility with
-the exact DBC program version pinned by this project still needs confirmation.
+funding or swap is currently possible through this prototype.
+
+Source review at Meteora DBC 0.2.1 commit
+`f552f20aa3c1c7631427c3827aeea7c58b902813` confirms that `swap2` uses
+`TokenInterface` for both token programs and token accounts. Its Token-2022 pool
+initializer also accepts the quote-token program through `TokenInterface`.
+Host-side tests cover the prototype's `swap2` discriminator/data, account order
+and flags, no-referral sentinel, event accounts, Instructions sysvar, and pool
+PDA mint ordering. This confirms the source-level interface, not the deployed
+Devnet program's source or runtime behavior.
+
+A read-only Devnet check on 2026-09-29 still matched the recorded program
+fingerprint in `launch-shield/README.md`. Rebuilding the reviewed DBC 0.2.1
+commit with Agave 4.3.0/platform-tools 1.57 and SBF arch v2 produced a 1,506,544
+byte artifact with SHA-256
+`a10f0f93c3a0419a5078446a9c3772d13ddbf0a8ed6b9f11d792e792d083579a`, which
+does not match the recorded Devnet executable. The architecture/build settings
+or source revision may differ; the deployed source remains unidentified, so
+runtime CPI compatibility is still unverified.
 
 The configured total bid amount is still authority-provided at initialization.
 Token-2022's withdrawal proof establishes that the vault can cover the
@@ -112,12 +128,15 @@ ELF.
 Run its host-side tests with:
 
 ```sh
-cargo test --locked --manifest-path launch-shield/private-claims-prototype/onchain/Cargo.toml
+env -u LD_AUDIT CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 \
+  CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked \
+    --manifest-path launch-shield/private-claims-prototype/onchain/Cargo.toml
 ```
 
-These are state, parsing, and verifier tests—not Solana runtime/CPI tests. The
-on-chain crate successfully built for SBF on 2026-09-29 with Agave 4.3.0 and
-platform-tools 1.57:
+These cover state, parsing, verifier, and DBC instruction-construction
+behavior—not Solana runtime/CPI behavior. The two DBC instruction/PDA tests
+passed on 2026-09-29. The on-chain crate successfully built for SBF with Agave
+4.3.0 and platform-tools 1.57:
 
 ```sh
 PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH" \
