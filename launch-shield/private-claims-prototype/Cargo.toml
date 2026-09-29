@@ -1,0 +1,18 @@
+[package]
+name = "private-claims-arithmetic-gate"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[dev-dependencies]
+curve25519-dalek = "=4.1.3"
+private-claims-proof-relation = { path = "proof/relation" }
+solana-zk-sdk = "=7.0.1"
+solana-zk-sdk-pod = "=0.1.2"
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0
