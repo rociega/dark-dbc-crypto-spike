@@ -1,12 +1,17 @@
-# Threat Model: Launch Shield
+# Threat Model
 
 ## Project Overview
 
-Launch Shield is a Solana auction prototype. Its active path is a public-reveal
-MVP; `launch-shield/private-claims-prototype/` is a separate research-only path
-that explores Token-2022 confidential funding, SP1 proofs, private claim notes,
-and Meteora DBC settlement. Users include auction authorities, bidders, proof
-operators, trustees, claim recipients, and settlement operators.
+This model scopes `launch-shield/`, a Rust/Solana auction prototype. Its active
+path is a public-reveal MVP; `launch-shield/private-claims-prototype/` is a
+separate research-only path using SP1 proofs, Token-2022 confidential transfers,
+private claim notes, and Meteora DBC settlement. Users include auction
+authorities, bidders, proof operators, trustees, claim recipients, and
+settlement operators.
+
+The workspace's Express/PostgreSQL API server and component-preview sandbox
+are outside this model; they are not assumed to participate in Launch Shield's
+fund-moving path and should be assessed separately if they are connected.
 
 The private-claims path is unaudited and not deployable. Its funding and
 settlement handlers remain fail-closed until a reviewed aggregate-decryption
