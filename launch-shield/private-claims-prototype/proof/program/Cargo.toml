@@ -1,0 +1,9 @@
+[package]
+name = "private-claims-proof-guest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+private-claims-proof-relation = { path = "../relation" }
+sp1-zkvm = "=6.8.1"

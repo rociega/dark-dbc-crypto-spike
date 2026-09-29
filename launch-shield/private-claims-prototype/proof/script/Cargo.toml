@@ -1,0 +1,21 @@
+[package]
+name = "private-claims-proof-runner"
+version = "0.1.0"
+edition = "2021"
+default-run = "private-claims-proof-runner"
+
+[[bin]]
+name = "private-claims-proof-runner"
+path = "src/main.rs"
+required-features = ["local-executor"]
+
+[features]
+local-executor = ["dep:sp1-sdk"]
+local-prover = ["local-executor", "dep:private-claims-onchain"]
+
+[dependencies]
+curve25519-dalek = { version = "=4.1.3", default-features = false, features = ["alloc", "digest"] }
+private-claims-proof-relation = { path = "../relation" }
+private-claims-onchain = { path = "../../onchain", features = ["no-entrypoint"], optional = true }
+sha3 = { version = "=0.10.9", default-features = false }
+sp1-sdk = { version = "=6.8.1", default-features = false, features = ["blocking"], optional = true }
