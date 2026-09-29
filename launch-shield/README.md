@@ -99,7 +99,12 @@ cluster's DBC compatibility still needs an exact build/source match and runtime
 settlement test. A read-only Devnet check on 2026-09-29 also recorded upgrade
 authority `DHLXnJdACTY83yKwnUkeoDjqi4QBbsYGa1v8tJL76ViX`. Its account is
 System Program-owned and has no data; that does not identify its custodian or
-demonstrate multisig governance.
+demonstrate multisig governance. The loader upgrade at slot `503167099` is
+transaction `39nd4sr3Dqo9HLaG9xQWnGmgF1WYQHA5gnKboiSe33u7yU4wvcYQGCcFhx7mPv4hjx5HFWtVV2zJZu9nQoyZ8qEx`;
+its parsed instruction records that key as the signer/authority and names
+buffer `Fwi4h1tEjzkWBN1dm4mhxGa67Tcss2XXoEUwy5o3i2Da`. This corroborates who
+authorized the observed upgrade, but does not identify the key's custodian or
+the executable's source/build.
 
 To repeat the read-only Devnet fingerprint check, run
 `python3 launch-shield/scripts/check_dbc_devnet.py`. It uses
