@@ -118,6 +118,9 @@ fn initialize(
     total_bid_amount: u64,
     total_output_amount: u64,
 ) -> Result<(), ProgramError> {
+    if !AGGREGATE_DECRYPTION_PROOF_READY {
+        return Err(INVALID_CONFIGURATION);
+    }
     if accounts.len() != 11
         || total_bid_amount == 0
         || total_bid_amount > MAX_TOTAL_BID_AMOUNT
@@ -1202,6 +1205,25 @@ mod tests {
         let program_id = Pubkey::new_from_array([9; 32]);
         assert!(matches!(
             super::settle(&program_id, &[]),
+            Err(solana_program::program_error::ProgramError::Custom(3))
+        ));
+    }
+
+    #[test]
+    fn initialization_stays_fail_closed_before_token_side_effects() {
+        let program_id = Pubkey::new_from_array([9; 32]);
+        assert!(matches!(
+            super::initialize(
+                &program_id,
+                &[],
+                &[0; 32],
+                &[0; 32],
+                &[0; 32],
+                &[0; 32],
+                &[0; 32],
+                0,
+                0,
+            ),
             Err(solana_program::program_error::ProgramError::Custom(3))
         ));
     }
