@@ -61,10 +61,12 @@ confidential-transfer CPIs and is frozen before settlement. See the
 project-level security context in `../../threat_model.md`.
 
 The on-chain code contains the Token-2022 pending-balance and Meteora DBC
-`swap2` settlement path, including output-vault delta accounting. That path is
-deliberately fail-closed: both `FundBid` and `Settle` return an error until a
-reviewed proof binds the public aggregate to every accepted private bid. No
-funding or swap is currently possible through this prototype.
+`swap2` settlement path, including output-vault delta accounting. The
+aggregate-proof gate is deliberately fail-closed: `Initialize`, `FundBid`, and
+`Settle` return an error until a reviewed proof binds the public aggregate to
+every accepted private bid. In particular, `Initialize` stops before creating
+a pool or changing Token-2022 vault credit settings. No funding or swap is
+currently possible through this prototype.
 
 Source review at Meteora DBC 0.2.1 commit
 `f552f20aa3c1c7631427c3827aeea7c58b902813` confirms that `swap2` uses
@@ -129,8 +131,10 @@ verifies an SP1 funding proof, invokes Token-2022 v8.0.1, applies the pending
 credit, and disables further confidential credits. Initialization also disables
 public credits. The fixed-eight funded-bid root is designed to contain only
 commitments whose CPIs succeeded. `FinalizeFunding` freezes that root. The
-`FundBid` and `Settle` handlers currently stop at a fail-closed guard, so these
-transfer and settlement paths cannot be used yet.
+`Initialize`, `FundBid`, and `Settle` handlers currently stop at fail-closed
+guards, so pool creation, transfer, and settlement paths cannot be used yet.
+The initialization guard runs before pool creation or Token-2022
+credit-setting CPIs.
 
 Once the aggregate proof is implemented, `Settle` is intended to withdraw the
 verified bid total and call DBC `swap2` with the Token-2022 funding mint as quote
@@ -155,8 +159,8 @@ env -u LD_AUDIT CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 \
 ```
 
 These cover state, parsing, verifier, DBC instruction-construction, and the
-handler-level fail-closed funding/settlement guards—not Solana runtime/CPI
-behavior. All 17 on-chain host tests passed on 2026-09-29. The on-chain crate
+handler-level fail-closed initialization/funding/settlement guards—not Solana
+runtime/CPI behavior. All 18 on-chain host tests passed on 2026-09-29. The on-chain crate
 successfully built for SBF with Agave 4.3.0 and platform-tools 1.57:
 
 ```sh
@@ -168,8 +172,8 @@ PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH" \
     --patch-binaries-for-nix false
 ```
 
-The resulting SBF artifact's SHA-256 was
-`164b3cf69cc4c86157e1e25c5aecb1f500d391815f582e666c790e0feec92025`. It has
+The resulting SBF artifact was 176,560 bytes with SHA-256
+`33709456109be3768efd1e0c5865dac49ad8269f5af5a161e2a3278c3b5c1d6d`. It has
 not been executed in ProgramTest or deployed/tested on Devnet. A successful
 compiler build does not validate runtime correctness, CPI behavior, DBC
 compatibility, or deployment readiness; `FundBid` and `Settle` remain
