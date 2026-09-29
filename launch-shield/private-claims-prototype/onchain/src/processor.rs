@@ -1189,6 +1189,24 @@ mod tests {
     }
 
     #[test]
+    fn funding_stays_fail_closed_until_aggregate_proof_is_ready() {
+        let program_id = Pubkey::new_from_array([9; 32]);
+        assert!(matches!(
+            super::fund_bid(&program_id, &[], &[], &[], &[]),
+            Err(solana_program::program_error::ProgramError::Custom(3))
+        ));
+    }
+
+    #[test]
+    fn settlement_stays_fail_closed_until_aggregate_proof_is_ready() {
+        let program_id = Pubkey::new_from_array([9; 32]);
+        assert!(matches!(
+            super::settle(&program_id, &[]),
+            Err(solana_program::program_error::ProgramError::Custom(3))
+        ));
+    }
+
+    #[test]
     fn claim_statement_must_match_every_registered_auction_parameter() {
         let program_id = Pubkey::new_from_array([9; 32]);
         let state = state();
