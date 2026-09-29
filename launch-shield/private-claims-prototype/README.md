@@ -115,11 +115,25 @@ Run its host-side tests with:
 cargo test --locked --manifest-path launch-shield/private-claims-prototype/onchain/Cargo.toml
 ```
 
-These are state, parsing, and verifier tests—not Solana runtime/CPI tests. This
-environment currently lacks the `cargo build-sbf` command, so the new program
-has not been built for SBF, deployed, or tested on Devnet. The host `cargo
-check` succeeds, but it does not establish runtime correctness or deployment
-readiness.
+These are state, parsing, and verifier tests—not Solana runtime/CPI tests. The
+on-chain crate successfully built for SBF on 2026-09-29 with Agave 4.3.0 and
+platform-tools 1.57:
+
+```sh
+PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH" \
+  env -u LD_AUDIT cargo build-sbf \
+    --manifest-path launch-shield/private-claims-prototype/onchain/Cargo.toml \
+    --sbf-out-dir /tmp/private-claims-sbf \
+    --arch v2 \
+    --patch-binaries-for-nix false
+```
+
+The resulting SBF artifact's SHA-256 was
+`164b3cf69cc4c86157e1e25c5aecb1f500d391815f582e666c790e0feec92025`. It has
+not been executed in ProgramTest or deployed/tested on Devnet. A successful
+compiler build does not validate runtime correctness, CPI behavior, DBC
+compatibility, or deployment readiness; `FundBid` and `Settle` remain
+fail-closed.
 
 ## Host tests
 
