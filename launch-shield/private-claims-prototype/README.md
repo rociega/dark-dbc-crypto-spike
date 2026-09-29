@@ -73,6 +73,10 @@ Host-side tests cover the prototype's `swap2` discriminator/data, account order
 and flags, no-referral sentinel, event accounts, Instructions sysvar, and pool
 PDA mint ordering. This confirms the source-level interface, not the deployed
 Devnet program's source or runtime behavior.
+In this source, `swap2` transfers input using its signer `payer` and rejects
+quote mints with a nonzero active or scheduled transfer fee. The prototype
+passes its confidential-vault authority PDA as that payer and signs the CPI
+with the PDA seeds; runtime behavior is still unverified.
 
 A read-only Devnet check on 2026-09-29 still matched the recorded program
 fingerprint in `launch-shield/README.md`. Rebuilding the reviewed DBC 0.2.1
