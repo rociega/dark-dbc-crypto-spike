@@ -134,7 +134,8 @@ account state.
 - No single operator or prover receives all bid openings or claim secrets.
 - Every accepted transfer contributes exactly once to the frozen aggregate.
 - Every published total is publicly verifiable against the frozen accepted set.
-- No funding or settlement occurs while the aggregate proof gate is false.
+- No private-claims initialization, funding, or settlement occurs while the
+  aggregate proof gate is false.
 - Claim and redemption nullifiers remain domain-separated and replay-resistant.
 - Token and DBC CPIs use the reviewed program IDs, accounts, and compatible
   deployed binaries.
