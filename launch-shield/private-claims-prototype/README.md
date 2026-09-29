@@ -176,6 +176,11 @@ Run with Rust 1.88 or later:
 cargo test --locked --manifest-path launch-shield/private-claims-prototype/Cargo.toml
 ```
 
+On 2026-09-29, this workspace suite passed all 20 arithmetic-gate host tests.
+The on-chain crate separately passed all 17 host tests. Neither command runs a
+Solana runtime/CPI test; the research-only DKG and malicious-trustee caveats
+above still apply.
+
 ## SP1 guest and local execution
 
 The nested proof workspace is pinned to SP1 6.8.1. On a fresh environment,
