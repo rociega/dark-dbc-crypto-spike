@@ -1,15 +1,13 @@
 use solana_program::{
-    account_info::AccountInfo,
-    entrypoint,
-    entrypoint::ProgramResult,
-    pubkey::Pubkey,
+    account_info::AccountInfo, entrypoint, entrypoint::ProgramResult, pubkey::Pubkey,
 };
 
-mod dbc;
 mod commitment;
+mod dbc;
 mod error;
 mod instruction;
 mod processor;
+mod sp1_v6;
 mod state;
 
 #[cfg(not(feature = "no-entrypoint"))]

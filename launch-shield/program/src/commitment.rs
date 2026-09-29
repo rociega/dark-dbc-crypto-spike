@@ -139,8 +139,7 @@ mod tests {
         };
         statement.bid_commitment = guest_commitment(&statement, amount, &salt);
 
-        let onchain_commitment =
-            bid_commitment(&program, &auction_id, &bidder, amount, &salt);
+        let onchain_commitment = bid_commitment(&program, &auction_id, &bidder, amount, &salt);
         assert_eq!(onchain_commitment, statement.bid_commitment);
         assert_eq!(
             public_values(

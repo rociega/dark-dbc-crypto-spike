@@ -1,9 +1,13 @@
 use std::{error::Error, io::Read};
 
 use launch_shield_proof_relation::{bid_commitment, BidStatement};
-use sp1_sdk::{include_elf, HashableKey, Prover, ProverClient, SP1Stdin};
+use sp1_sdk::{
+    blocking::{Prover, ProverClient, SP1Stdin},
+    include_elf, HashableKey,
+};
 
-const GUEST_ELF: &[u8] = include_elf!("launch-shield-proof-guest");
+const GUEST_ELF: sp1_sdk::Elf = include_elf!("launch-shield-proof-guest");
+const SP1_V6_PROOF_LEN: usize = 356;
 
 fn decode_hex<const N: usize>(value: &str, label: &str) -> Result<[u8; N], Box<dyn Error>> {
     let value = value.trim().strip_prefix("0x").unwrap_or(value.trim());
@@ -77,16 +81,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     stdin.write(&salt);
 
     let client = ProverClient::builder().cpu().build();
-    let (proving_key, verifying_key) = client.setup(GUEST_ELF);
+    let proving_key = client.setup(GUEST_ELF.into())?;
+    let verifying_key = proving_key.verifying_key();
     let proof = client
-        .prove(&proving_key, &stdin)
+        .prove(&proving_key, stdin)
         .groth16()
         .run()?;
-    client.verify(&proof, &verifying_key)?;
+    client.verify(&proof, verifying_key, None)?;
 
     let proof_bytes = proof.bytes();
     let public_values = proof.public_values.as_slice();
-    if proof_bytes.len() != 260 || public_values != statement.public_values() {
+    if proof_bytes.len() != SP1_V6_PROOF_LEN || public_values != statement.public_values() {
         return Err("generated proof does not match the on-chain encoding".into());
     }
 

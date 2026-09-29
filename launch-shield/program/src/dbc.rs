@@ -42,7 +42,12 @@ pub fn pool_address(config: &Pubkey, base_mint: &Pubkey, quote_mint: &Pubkey) ->
         (quote_mint, base_mint)
     };
     Pubkey::find_program_address(
-        &[b"pool", config.as_ref(), max_mint.as_ref(), min_mint.as_ref()],
+        &[
+            b"pool",
+            config.as_ref(),
+            max_mint.as_ref(),
+            min_mint.as_ref(),
+        ],
         &DBC_PROGRAM_ID,
     )
     .0
@@ -72,23 +77,13 @@ pub fn verify_settlement_layout(
     let prepare_ix = load_instruction_at_checked(current, instructions_sysvar)?;
     if prepare_ix.program_id != *program_id
         || prepare_ix.data.as_slice() != [5]
-        || prepare_ix
-            .accounts
-            .first()
-            .map(|meta| meta.pubkey)
-            != Some(*auction_key)
+        || prepare_ix.accounts.first().map(|meta| meta.pubkey) != Some(*auction_key)
     {
         return Err(ShieldError::InvalidDbcInstruction.into());
     }
 
     let init_ix = load_instruction_at_checked(current - 2, instructions_sysvar)?;
-    verify_init_instruction(
-        &init_ix,
-        dbc_config,
-        quote_mint,
-        base_mint,
-        creator,
-    )?;
+    verify_init_instruction(&init_ix, dbc_config, quote_mint, base_mint, creator)?;
 
     let create_vault_ix = load_instruction_at_checked(current - 1, instructions_sysvar)?;
     verify_output_vault_creation(
@@ -120,20 +115,12 @@ pub fn verify_settlement_layout(
     let finalize_ix = load_instruction_at_checked(current + 2, instructions_sysvar)?;
     if finalize_ix.program_id != *program_id
         || finalize_ix.data.as_slice() != [6]
-        || finalize_ix
-            .accounts
-            .first()
-            .map(|meta| meta.pubkey)
-            != Some(*auction_key)
+        || finalize_ix.accounts.first().map(|meta| meta.pubkey) != Some(*auction_key)
     {
         return Err(ShieldError::InvalidDbcInstruction.into());
     }
 
-    ensure_only_one_pool_swap(
-        instructions_sysvar,
-        &swap.pool,
-        current + 1,
-    )?;
+    ensure_only_one_pool_swap(instructions_sysvar, &swap.pool, current + 1)?;
 
     Ok(Swap2View {
         pool: swap.pool,
@@ -173,11 +160,7 @@ pub fn validate_finalize_predecessor(
     let finalize_ix = load_instruction_at_checked(current, instructions_sysvar)?;
     if finalize_ix.program_id != *program_id
         || finalize_ix.data.as_slice() != [6]
-        || finalize_ix
-            .accounts
-            .first()
-            .map(|meta| meta.pubkey)
-            != Some(*auction_key)
+        || finalize_ix.accounts.first().map(|meta| meta.pubkey) != Some(*auction_key)
     {
         return Err(ShieldError::InvalidDbcInstruction.into());
     }
@@ -330,9 +313,7 @@ fn instruction_count_checked(instructions_sysvar: &AccountInfo) -> ShieldResult<
 fn instruction_count_from_data(data: &[u8]) -> ShieldResult<usize> {
     // The instructions sysvar begins with its top-level instruction count as a
     // little-endian u16, followed by the offset table and instruction records.
-    let count_bytes = data
-        .get(..2)
-        .ok_or(ShieldError::InvalidDbcInstruction)?;
+    let count_bytes = data.get(..2).ok_or(ShieldError::InvalidDbcInstruction)?;
     let count = usize::from(u16::from_le_bytes([count_bytes[0], count_bytes[1]]));
     let minimum_data_len = count
         .checked_mul(2)
@@ -394,27 +375,26 @@ mod tests {
     fn instructions_sysvar_data(instructions: &[Instruction], current_index: u16) -> Vec<u8> {
         let borrowed = instructions
             .iter()
-            .map(|instruction| {
-                solana_program::sysvar::instructions::BorrowedInstruction {
+            .map(
+                |instruction| solana_program::sysvar::instructions::BorrowedInstruction {
                     program_id: &instruction.program_id,
                     accounts: instruction
                         .accounts
                         .iter()
-                        .map(|account| {
-                            solana_program::sysvar::instructions::BorrowedAccountMeta {
+                        .map(
+                            |account| solana_program::sysvar::instructions::BorrowedAccountMeta {
                                 pubkey: &account.pubkey,
                                 is_signer: account.is_signer,
                                 is_writable: account.is_writable,
-                            }
-                        })
+                            },
+                        )
                         .collect(),
                     data: &instruction.data,
-                }
-            })
+                },
+            )
             .collect::<Vec<_>>();
         #[allow(deprecated)]
-        let mut data =
-            solana_program::sysvar::instructions::construct_instructions_data(&borrowed);
+        let mut data = solana_program::sysvar::instructions::construct_instructions_data(&borrowed);
         let current_index_offset = data.len() - 2;
         data[current_index_offset..].copy_from_slice(&current_index.to_le_bytes());
         data
@@ -477,10 +457,7 @@ mod tests {
                 AccountMeta::new_readonly(creator, false),
                 AccountMeta::new_readonly(base_mint, false),
                 AccountMeta::new_readonly(quote_mint, false),
-                AccountMeta::new_readonly(
-                    pool_address(&config, &base_mint, &quote_mint),
-                    false,
-                ),
+                AccountMeta::new_readonly(pool_address(&config, &base_mint, &quote_mint), false),
             ],
             data: discriminator(INIT_SPL_NAME).to_vec(),
         };
@@ -517,14 +494,10 @@ mod tests {
             wrong_pool,
             missing_pool,
         ] {
-            assert!(verify_init_instruction(
-                &invalid,
-                &config,
-                &quote_mint,
-                &base_mint,
-                &creator,
-            )
-            .is_err());
+            assert!(
+                verify_init_instruction(&invalid, &config, &quote_mint, &base_mint, &creator,)
+                    .is_err()
+            );
         }
 
         ix.accounts
@@ -607,11 +580,7 @@ mod tests {
             accounts: Vec::new(),
             data: Vec::new(),
         };
-        let instructions = vec![
-            unrelated.clone(),
-            expected_swap.clone(),
-            unrelated.clone(),
-        ];
+        let instructions = vec![unrelated.clone(), expected_swap.clone(), unrelated.clone()];
         scan_pool_swaps(&instructions, &pool, 1).unwrap();
 
         let mut duplicate_swap = swap2_fixture();
@@ -632,10 +601,8 @@ mod tests {
         let quote_mint = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
         let creator_input = Pubkey::new_unique();
-        let base_output = associated_token_address(
-            &vault_authority(&program_id, &auction).0,
-            &base_mint,
-        );
+        let base_output =
+            associated_token_address(&vault_authority(&program_id, &auction).0, &base_mint);
         let pool = pool_address(&config, &base_mint, &quote_mint);
         let dbc_base_vault = Pubkey::new_unique();
         let dbc_quote_vault = Pubkey::new_unique();
@@ -685,13 +652,7 @@ mod tests {
             accounts: vec![AccountMeta::new(auction, false)],
             data: vec![6],
         };
-        let instructions = vec![
-            init_ix,
-            create_vault_ix,
-            prepare_ix,
-            swap_ix,
-            finalize_ix,
-        ];
+        let instructions = vec![init_ix, create_vault_ix, prepare_ix, swap_ix, finalize_ix];
 
         with_instructions_sysvar(&instructions, 2, |instructions_sysvar| {
             let view = verify_settlement_layout(

@@ -832,12 +832,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
-name = "hex"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
 name = "hybrid-array"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -904,10 +898,14 @@ dependencies = [
 name = "launch-shield-program"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254 0.4.0",
+ "ark-ff 0.4.2",
+ "ark-serialize 0.4.2",
  "bincode",
+ "groth16-solana",
  "launch-shield-proof-relation",
+ "sha2 0.10.9",
  "solana-program",
- "sp1-solana",
  "spl-token",
 ]
 
@@ -2178,22 +2176,6 @@ dependencies = [
  "solana-serialize-utils",
  "solana-short-vec",
  "solana-system-interface",
-]
-
-[[package]]
-name = "sp1-solana"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52f3933caad3aa61eeebfa4d1dffd83e3c09653ad1b4208f45ea16570d66e406"
-dependencies = [
- "ark-bn254 0.4.0",
- "ark-ff 0.4.2",
- "ark-serialize 0.4.2",
- "groth16-solana",
- "hex",
- "num-bigint",
- "sha2 0.10.9",
- "thiserror 1.0.69",
 ]
 
 [[package]]

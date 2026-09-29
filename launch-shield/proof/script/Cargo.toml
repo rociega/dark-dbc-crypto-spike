@@ -7,9 +7,11 @@ default-run = "launch-shield-proof-runner"
 [[bin]]
 name = "launch-shield-proof-runner"
 path = "src/main.rs"
+required-features = ["sp1-executor"]
 
 [features]
-sp1-prover = ["dep:hex", "dep:sp1-sdk"]
+sp1-executor = ["dep:sp1-sdk"]
+sp1-prover = ["sp1-executor", "dep:hex", "sp1-sdk/native-gnark"]
 
 [[bin]]
 name = "launch-shield-vkey"
@@ -23,12 +25,8 @@ required-features = ["sp1-prover"]
 
 [dependencies]
 launch-shield-proof-relation = { path = "../relation" }
-sp1-build = "=5.0.0"
-sp1-core-executor = "=5.2.4"
-sp1-core-machine = "=5.2.4"
-sp1-stark = "=5.2.4"
 hex = { version = "=0.4.3", optional = true }
-sp1-sdk = { version = "=5.0.0", default-features = false, optional = true }
+sp1-sdk = { version = "=6.8.1", default-features = false, features = ["blocking"], optional = true }
 
 [build-dependencies]
-sp1-build = "=5.0.0"
+sp1-build = "=6.8.1"
