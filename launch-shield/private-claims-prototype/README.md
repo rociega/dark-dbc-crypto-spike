@@ -57,7 +57,8 @@ hash functions used to bind those CPI inputs.
 This remains **research-only, unaudited, and not deployable**. It is not a DKG,
 MPC implementation, malicious-secure protocol, aggregate-decryption system, or
 production key-management API. The accepted-bid root is derived from successful
-confidential-transfer CPIs and is frozen before settlement.
+confidential-transfer CPIs and is frozen before settlement. See the
+project-level security context in `../../threat_model.md`.
 
 The on-chain code contains the Token-2022 pending-balance and Meteora DBC
 `swap2` settlement path, including output-vault delta accounting. That path is
@@ -109,6 +110,12 @@ real keys, or a deployed program.
 A single-prover SP1 proof over all bid openings is not a safe shortcut: its
 prover would learn each amount and claim secret. Aggregate verification must
 preserve that information from any one operator.
+
+The current source-based candidate and its unresolved assumptions are documented
+in [AGGREGATE_DECRYPTION_DESIGN.md](AGGREGATE_DECRYPTION_DESIGN.md). It proposes
+homomorphic accumulation of accepted auditor ciphertexts and threshold
+decryption of only the frozen aggregate; this is not an implementation or
+security approval.
 
 ## On-chain claims prototype
 
