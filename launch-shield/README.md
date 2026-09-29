@@ -96,16 +96,19 @@ deployed executable bytes differ:
 Hashes cover the executable bytes after the upgradeable-loader metadata. These
 observations do not identify either binary's source revision; each target
 cluster's DBC compatibility still needs an exact build/source match and runtime
-settlement test. A fresh read-only Devnet check on 2026-09-28 still matches the
-recorded Devnet slot, executable length, and hash.
+settlement test. A read-only Devnet check on 2026-09-29 also recorded upgrade
+authority `DHLXnJdACTY83yKwnUkeoDjqi4QBbsYGa1v8tJL76ViX`. Its account is
+System Program-owned and has no data; that does not identify its custodian or
+demonstrate multisig governance.
 
 To repeat the read-only Devnet fingerprint check, run
 `python3 launch-shield/scripts/check_dbc_devnet.py`. It uses
 `SOLANA_DEVNET_RPC_URL` when set, otherwise the public Devnet RPC, and compares
-the ProgramData address, upgrade slot, executable length, and SHA-256 with the
-snapshot above. A mismatch exits nonzero. A match confirms only that the
-deployed bytes match this snapshot; it does not establish source identity or
-settlement compatibility.
+the ProgramData address, upgrade authority, upgrade slot, executable length,
+and SHA-256 with the recorded snapshots. A fresh check on 2026-09-29 matched
+all fields. A mismatch exits nonzero. A match confirms only that the deployed
+bytes and authority match those snapshots; it does not establish source identity
+or settlement compatibility.
 
 ## Program interface
 
