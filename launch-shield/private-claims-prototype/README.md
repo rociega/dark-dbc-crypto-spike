@@ -81,13 +81,21 @@ with the PDA seeds; runtime behavior is still unverified.
 A read-only Devnet check on 2026-09-29 still matched the recorded program
 fingerprint in `launch-shield/README.md`. Rebuilding the reviewed DBC 0.2.1
 commit with Agave 4.3.0/platform-tools 1.57 produced distinct SBF artifacts:
-arch v1 was 1,499,816 bytes with SHA-256
-`dcab965f511e92f41df935ded3232e6a4c8d9d0662269078e071660a9b1c29df`, and
-arch v2 was 1,506,544 bytes with SHA-256
-`a10f0f93c3a0419a5078446a9c3772d13ddbf0a8ed6b9f11d792e792d083579a`. Neither
-matches the recorded Devnet executable. The build settings or source revision
-may differ; the deployed source remains unidentified, so runtime CPI
-compatibility is still unverified.
+
+| Build | Bytes | SHA-256 |
+|---|---:|---|
+| arch v0 | 1,498,608 | `6587ce450a06cca876f58be7444e33d1e5939e444652fa4161f8b6d90fe692f8` |
+| arch v1 | 1,499,816 | `dcab965f511e92f41df935ded3232e6a4c8d9d0662269078e071660a9b1c29df` |
+| arch v2 | 1,506,544 | `a10f0f93c3a0419a5078446a9c3772d13ddbf0a8ed6b9f11d792e792d083579a` |
+| arch v3 | 1,426,928 | `238d2bc89a20a0898b081da722f7de2858d797dd875f60767161c9d55432ff2b` |
+| arch v3 with ABI v2 | 1,426,928 | `d39c027799cea00f5f8cf766a5f768834eaf55cce4668604ac83f81ef3813de0` |
+
+None matches the recorded Devnet executable (1,983,568 bytes,
+`f5ccbb01e37165d16108bda0259fb3acbfca29305e23098c3b248e50c22979f0`). An arch
+v4 build did not compile because platform-tools 1.57 lacks the
+`sbpfv4-solana-solana` standard-library target. The deployed source and build
+configuration therefore remain unidentified, and runtime CPI compatibility is
+still unverified.
 
 The configured total bid amount is still authority-provided at initialization.
 Token-2022's withdrawal proof establishes that the vault can cover the
@@ -139,10 +147,10 @@ env -u LD_AUDIT CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 \
     --manifest-path launch-shield/private-claims-prototype/onchain/Cargo.toml
 ```
 
-These cover state, parsing, verifier, and DBC instruction-construction
-behavior—not Solana runtime/CPI behavior. All 15 on-chain host tests passed on
-2026-09-29. The on-chain crate successfully built for SBF with Agave 4.3.0 and
-platform-tools 1.57:
+These cover state, parsing, verifier, DBC instruction-construction, and the
+handler-level fail-closed funding/settlement guards—not Solana runtime/CPI
+behavior. All 17 on-chain host tests passed on 2026-09-29. The on-chain crate
+successfully built for SBF with Agave 4.3.0 and platform-tools 1.57:
 
 ```sh
 PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH" \
