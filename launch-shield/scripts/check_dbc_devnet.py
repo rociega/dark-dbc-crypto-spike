@@ -22,6 +22,7 @@ UPGRADEABLE_LOADER_ID = "BPFLoaderUpgradeab1e11111111111111111111111"
 DEVNET_SNAPSHOT_SLOT = 503_167_099
 DEVNET_SNAPSHOT_EXECUTABLE_BYTES = 1_983_568
 DEVNET_SNAPSHOT_SHA256 = "f5ccbb01e37165d16108bda0259fb3acbfca29305e23098c3b248e50c22979f0"
+DEVNET_SNAPSHOT_UPGRADE_AUTHORITY = "DHLXnJdACTY83yKwnUkeoDjqi4QBbsYGa1v8tJL76ViX"
 DEFAULT_RPC_URL = "https://api.devnet.solana.com"
 BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
@@ -46,8 +47,8 @@ def program_data_address(program_account_data: bytes) -> str:
     return base58_encode(program_account_data[4:36])
 
 
-def parse_program_data(program_data: bytes) -> tuple[int, bytes]:
-    """Return (last-upgrade slot, executable bytes) from ProgramData account data."""
+def parse_program_data(program_data: bytes) -> tuple[int, str | None, bytes]:
+    """Return (last-upgrade slot, authority, executable bytes) from ProgramData."""
     if len(program_data) < 13:
         raise ValueError("ProgramData account data is truncated")
     if struct.unpack_from("<I", program_data)[0] != 3:
@@ -56,18 +57,37 @@ def parse_program_data(program_data: bytes) -> tuple[int, bytes]:
     slot = struct.unpack_from("<Q", program_data, 4)[0]
     authority_tag = program_data[12]
     if authority_tag == 0:
+        authority = None
         metadata_len = 13
     elif authority_tag == 1:
         metadata_len = 45
         if len(program_data) < metadata_len:
             raise ValueError("ProgramData upgrade-authority metadata is truncated")
+        authority = base58_encode(program_data[13:45])
     else:
         raise ValueError("invalid ProgramData upgrade-authority option tag")
 
     executable = program_data[metadata_len:]
     if not executable:
         raise ValueError("ProgramData account contains no executable bytes")
-    return slot, executable
+    return slot, authority, executable
+
+
+def matches_devnet_snapshot(
+    program_data_address_value: str,
+    slot: int,
+    upgrade_authority: str | None,
+    executable_bytes: int,
+    executable_sha256: str,
+) -> bool:
+    """Compare all recorded executable and upgrade-authority snapshot fields."""
+    return (
+        program_data_address_value == PROGRAM_DATA_ADDRESS
+        and slot == DEVNET_SNAPSHOT_SLOT
+        and upgrade_authority == DEVNET_SNAPSHOT_UPGRADE_AUTHORITY
+        and executable_bytes == DEVNET_SNAPSHOT_EXECUTABLE_BYTES
+        and executable_sha256 == DEVNET_SNAPSHOT_SHA256
+    )
 
 
 def rpc_call(endpoint: str, method: str, params: list[object]) -> dict:
@@ -133,24 +153,29 @@ def main() -> int:
         if data_info.get("executable") is not False:
             raise RuntimeError("DBC ProgramData account has an unexpected executable flag")
 
-        slot, executable = parse_program_data(raw_program_data)
+        slot, upgrade_authority, executable = parse_program_data(raw_program_data)
     except (RuntimeError, ValueError, struct.error) as error:
         print(f"Devnet preflight failed: {error}", file=sys.stderr)
         return 2
 
     digest = hashlib.sha256(executable).hexdigest()
-    matches_snapshot = (
-        discovered_program_data == PROGRAM_DATA_ADDRESS
-        and slot == DEVNET_SNAPSHOT_SLOT
-        and len(executable) == DEVNET_SNAPSHOT_EXECUTABLE_BYTES
-        and digest == DEVNET_SNAPSHOT_SHA256
+    matches_snapshot = matches_devnet_snapshot(
+        discovered_program_data,
+        slot,
+        upgrade_authority,
+        len(executable),
+        digest,
     )
     print(f"Program: {PROGRAM_ID}")
     print(f"ProgramData: {discovered_program_data}")
+    print(f"Upgrade authority: {upgrade_authority or '(none; immutable)'}")
     print(f"Upgrade slot: {slot}")
     print(f"Executable bytes: {len(executable)}")
     print(f"SHA-256: {digest}")
-    print(f"Matches 2026-09-27 Devnet snapshot: {str(matches_snapshot).lower()}")
+    print(
+        "Matches recorded Devnet executable and authority snapshot: "
+        f"{str(matches_snapshot).lower()}"
+    )
     if not matches_snapshot:
         print(
             "Snapshot mismatch; investigate the deployment and its source before "
