@@ -111,8 +111,9 @@ To repeat the read-only Devnet fingerprint check, run
 `SOLANA_DEVNET_RPC_URL` when set, otherwise the public Devnet RPC, and compares
 the ProgramData address, upgrade authority, upgrade slot, executable length,
 and SHA-256 with the recorded snapshots. A fresh check on 2026-09-29 matched
-all fields. A fresh check on 2026-09-30 also matched all fields. A mismatch
-exits nonzero. A match confirms only that the deployed
+all fields. A fresh check on 2026-09-30 also matched all fields. A further
+read-only check on 2026-10-02 matched all fields again. A mismatch exits
+nonzero. A match confirms only that the deployed
 bytes and authority match those snapshots; it does not establish source identity
 or settlement compatibility.
 
@@ -379,6 +380,10 @@ upgradeable-loader program:
 |---|---|---|---:|---:|---|
 | `EffXTARKTMNvZrm9twMcaanYMw4FTijsSnvTU85C3yJz` | `J1hShJigprAh9rmVzqBm1iAChVZaXX3nYDR8ubkw7PcZ` | `EyrEcUXb1tJaUTuZxg59VeqZJ2TynKECeFzf1eZFwDbc` | 505984615 | 321,064 bytes | `ab0e74f0e074f5c8c47b9898e0786a8fe091ad10497343f385dad3ce8bb01115` |
 
+A fresh read-only check on 2026-10-02 confirmed the same ProgramData address,
+upgrade authority, deployment slot, ELF size, and SHA-256. This confirms the
+recorded on-chain artifact, not its source identity.
+
 The finalized on-chain ELF was dumped and matched the cached artifact's size
 and SHA-256. The deployer wallet is the upgrade authority. Deployment did not
 initialize the program or submit proofs, auction instructions, token CPIs, or
@@ -393,6 +398,12 @@ instructions have not been invoked there or under the upgradeable loader in a
 local validator. Token CPIs, real DBC settlement, and instruction runtime remain
 unverified. No DBC transaction simulation, deployed-version source match,
 verifier compute measurement, or production deployment has been completed.
+
+On 2026-10-02, the cached runtime-test binaries passed the three native
+ProgramTest cases, the opt-in upgradeable-loader SBF case, and the opt-in DBC
+Anchor-dispatch case using the verified Devnet DBC ELF. These were local checks;
+no Launch Shield instruction was sent to Devnet. They do not validate real DBC
+settlement or Token-2022 CPI behavior.
 
 The first usable release still needs a vkey and proof generated for the actual
 guest; a pinned DBC deployment/IDL; settlement transaction-size/compute
