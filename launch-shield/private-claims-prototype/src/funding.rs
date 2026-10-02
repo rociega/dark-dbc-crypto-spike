@@ -12,7 +12,7 @@ use private_claims_proof_relation::{
 use solana_zk_sdk::encryption::pedersen::{G, H};
 
 fn encrypt_component(pubkey: &RistrettoPoint, value: u64, opening: Scalar) -> [u8; 64] {
-    let commitment = (G * Scalar::from(value) + *H * opening)
+    let commitment = (*G * Scalar::from(value) + *H * opening)
         .compress()
         .to_bytes();
     let handle = (pubkey * opening).compress().to_bytes();

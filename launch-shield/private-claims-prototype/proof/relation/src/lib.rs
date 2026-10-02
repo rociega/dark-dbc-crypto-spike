@@ -8,6 +8,9 @@ use curve25519_dalek::{
 use sha2::{Digest, Sha256};
 use sha3::Sha3_512;
 
+pub mod aggregate;
+pub mod threshold;
+
 pub const MAX_BID_AMOUNT: u64 = (1u64 << 32) - 1;
 pub const PUBLIC_VALUES_LEN: usize = 384;
 pub const MAX_FUNDED_BIDS: usize = 8;
@@ -24,10 +27,8 @@ const REDEMPTION_NULLIFIER_DOMAIN: &[u8] = b"private-claims:redemption-nullifier
 const CLAIM_NOTE_DOMAIN: &[u8] = b"private-claims:note:test-v1";
 const NOTE_LEAF_DOMAIN: &[u8] = b"private-claims:note-leaf:test-v1";
 const NOTE_NODE_DOMAIN: &[u8] = b"private-claims:note-node:test-v1";
-const PROOF_CONTEXT_ACCOUNT_DOMAIN: &[u8] =
-    b"private-claims:proof-context-account:test-v1";
-const ACCEPTED_TRANSFER_CONTEXT_DOMAIN: &[u8] =
-    b"private-claims:accepted-transfer-context:test-v1";
+const PROOF_CONTEXT_ACCOUNT_DOMAIN: &[u8] = b"private-claims:proof-context-account:test-v1";
+const ACCEPTED_TRANSFER_CONTEXT_DOMAIN: &[u8] = b"private-claims:accepted-transfer-context:test-v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FundingStatement {
@@ -111,10 +112,7 @@ pub fn proof_context_account_hash(
     owner: &[u8; 32],
     data: &[u8],
 ) -> [u8; 32] {
-    hash_domain(
-        PROOF_CONTEXT_ACCOUNT_DOMAIN,
-        &[account_key, owner, data],
-    )
+    hash_domain(PROOF_CONTEXT_ACCOUNT_DOMAIN, &[account_key, owner, data])
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -238,12 +236,7 @@ pub fn claim_nullifier(
 ) -> [u8; 32] {
     hash_domain(
         CLAIM_NULLIFIER_DOMAIN,
-        &[
-            program_id,
-            auction_id,
-            bid_commitment,
-            claim_secret,
-        ],
+        &[program_id, auction_id, bid_commitment, claim_secret],
     )
 }
 
@@ -255,12 +248,7 @@ pub fn redemption_nullifier(
 ) -> [u8; 32] {
     hash_domain(
         REDEMPTION_NULLIFIER_DOMAIN,
-        &[
-            program_id,
-            auction_id,
-            bid_commitment,
-            claim_secret,
-        ],
+        &[program_id, auction_id, bid_commitment, claim_secret],
     )
 }
 
@@ -285,9 +273,7 @@ pub fn claim_note_commitment(
     )
 }
 
-pub fn funded_bid_merkle_root(
-    leaves: &[[u8; 32]; MAX_FUNDED_BIDS],
-) -> [u8; 32] {
+pub fn funded_bid_merkle_root(leaves: &[[u8; 32]; MAX_FUNDED_BIDS]) -> [u8; 32] {
     merkle_levels(leaves, BID_LEAF_DOMAIN, BID_NODE_DOMAIN)[BID_MERKLE_DEPTH][0]
 }
 
@@ -308,9 +294,7 @@ pub fn funded_bid_merkle_path(
     Some(path)
 }
 
-pub fn claim_note_merkle_root(
-    leaves: &[[u8; 32]; MAX_FUNDED_BIDS],
-) -> [u8; 32] {
+pub fn claim_note_merkle_root(leaves: &[[u8; 32]; MAX_FUNDED_BIDS]) -> [u8; 32] {
     merkle_levels(leaves, NOTE_LEAF_DOMAIN, NOTE_NODE_DOMAIN)[BID_MERKLE_DEPTH][0]
 }
 
@@ -372,7 +356,7 @@ pub fn verify_redemption_relation(
         &statement.auction_id,
         &statement.output_mint,
         statement.amount,
-            &expected_claim_nullifier,
+        &expected_claim_nullifier,
         &witness.note_randomness,
     );
     verify_merkle_path(
@@ -533,11 +517,8 @@ fn ciphertext_component_matches(
         return false;
     };
 
-    let h = RistrettoPoint::hash_from_bytes::<Sha3_512>(
-        RISTRETTO_BASEPOINT_COMPRESSED.as_bytes(),
-    );
-    let expected_commitment =
-        RISTRETTO_BASEPOINT_POINT * Scalar::from(value) + h * opening;
+    let h = RistrettoPoint::hash_from_bytes::<Sha3_512>(RISTRETTO_BASEPOINT_COMPRESSED.as_bytes());
+    let expected_commitment = RISTRETTO_BASEPOINT_POINT * Scalar::from(value) + h * opening;
     let expected_handle = pubkey * opening;
     commitment == expected_commitment && handle == expected_handle
 }
@@ -571,4 +552,73 @@ pub fn verify_funding_relation(statement: &FundingStatement, witness: &FundingWi
             &witness.opening_high,
             &statement.ciphertext_high,
         )
+}
+
+fn decompress_elgamal_ciphertext(
+    ciphertext: &[u8; 64],
+) -> Option<(RistrettoPoint, RistrettoPoint)> {
+    let commitment_bytes: [u8; 32] = ciphertext[..32].try_into().ok()?;
+    let handle_bytes: [u8; 32] = ciphertext[32..].try_into().ok()?;
+    let commitment = CompressedRistretto(commitment_bytes).decompress()?;
+    let handle = CompressedRistretto(handle_bytes).decompress()?;
+    Some((commitment, handle))
+}
+
+pub fn is_valid_elgamal_ciphertext(ciphertext: &[u8; 64]) -> bool {
+    decompress_elgamal_ciphertext(ciphertext).is_some()
+}
+
+pub fn add_elgamal_ciphertexts(left: &[u8; 64], right: &[u8; 64]) -> Option<[u8; 64]> {
+    let (left_commitment, left_handle) = decompress_elgamal_ciphertext(left)?;
+    let (right_commitment, right_handle) = decompress_elgamal_ciphertext(right)?;
+    let commitment_sum = (left_commitment + right_commitment).compress();
+    let handle_sum = (left_handle + right_handle).compress();
+
+    let mut sum = [0; 64];
+    sum[..32].copy_from_slice(commitment_sum.as_bytes());
+    sum[32..].copy_from_slice(handle_sum.as_bytes());
+    Some(sum)
+}
+
+#[cfg(test)]
+mod elgamal_ciphertext_tests {
+    use super::{add_elgamal_ciphertexts, is_valid_elgamal_ciphertext};
+    use curve25519_dalek::{constants::RISTRETTO_BASEPOINT_POINT, scalar::Scalar};
+
+    fn encode_ciphertext(commitment_scalar: u64, handle_scalar: u64) -> [u8; 64] {
+        let commitment = (RISTRETTO_BASEPOINT_POINT * Scalar::from(commitment_scalar)).compress();
+        let handle = (RISTRETTO_BASEPOINT_POINT * Scalar::from(handle_scalar)).compress();
+        let mut ciphertext = [0; 64];
+        ciphertext[..32].copy_from_slice(commitment.as_bytes());
+        ciphertext[32..].copy_from_slice(handle.as_bytes());
+        ciphertext
+    }
+
+    #[test]
+    fn ciphertext_addition_sums_both_ristretto_components() {
+        let left = encode_ciphertext(3, 7);
+        let right = encode_ciphertext(5, 11);
+        let expected = encode_ciphertext(8, 18);
+
+        assert_eq!(add_elgamal_ciphertexts(&left, &right), Some(expected));
+    }
+
+    #[test]
+    fn zero_ciphertext_is_the_additive_identity() {
+        let zero = [0; 64];
+        let value = encode_ciphertext(13, 17);
+
+        assert!(is_valid_elgamal_ciphertext(&zero));
+        assert_eq!(add_elgamal_ciphertexts(&zero, &value), Some(value));
+        assert_eq!(add_elgamal_ciphertexts(&value, &zero), Some(value));
+    }
+
+    #[test]
+    fn malformed_compressed_points_are_rejected() {
+        let malformed = [u8::MAX; 64];
+        let zero = [0; 64];
+
+        assert!(!is_valid_elgamal_ciphertext(&malformed));
+        assert_eq!(add_elgamal_ciphertexts(&malformed, &zero), None);
+    }
 }

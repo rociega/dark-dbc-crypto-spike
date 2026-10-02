@@ -1,19 +1,24 @@
 use crate::{
     dbc,
-    instruction::{
-        ClaimsInstruction, DECRYPTABLE_BALANCE_LEN, FUNDING_PUBLIC_VALUES_LEN,
-    },
+    instruction::{ClaimsInstruction, DECRYPTABLE_BALANCE_LEN, FUNDING_PUBLIC_VALUES_LEN},
     sp1_v6,
-    state::{ClaimPool, CLAIM_POOL_DATA_LEN, MAX_CLAIMS, MAX_FUNDED_BIDS},
+    state::{ClaimPool, CLAIM_POOL_DATA_LEN, MAX_FUNDED_BIDS},
 };
 use bytemuck::{bytes_of, try_pod_read_unaligned};
+use private_claims_proof_relation::{
+    aggregate::{
+        AggregateDecryptionStatement, TrusteeKeySetupStatement,
+        AGGREGATE_DECRYPTION_PUBLIC_VALUES_LEN, TRUSTEE_KEY_SETUP_PUBLIC_VALUES_LEN,
+    },
+    MAX_BID_AMOUNT,
+};
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
     hash::hashv,
     program::{invoke, invoke_signed},
     program_error::ProgramError,
-    pubkey::Pubkey,
     program_pack::Pack,
+    pubkey::Pubkey,
     rent::Rent,
     system_instruction, system_program,
     sysvar::Sysvar,
@@ -33,22 +38,18 @@ use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation
 use std::convert::TryInto;
 
 const AUCTION_ID_DOMAIN: &[u8] = b"private-claims:auction-id:test-v1";
-const MAX_TOTAL_BID_AMOUNT: u64 = ((1u64 << 32) - 1) * MAX_CLAIMS as u64;
 const INVALID_PROOF: ProgramError = ProgramError::Custom(2);
 const INVALID_CONFIGURATION: ProgramError = ProgramError::Custom(3);
 const INVALID_PUBLIC_VALUES: ProgramError = ProgramError::Custom(4);
 const INVALID_TOKEN_ACCOUNTS: ProgramError = ProgramError::Custom(5);
 const INVALID_CONFIDENTIAL_TRANSFER: ProgramError = ProgramError::Custom(6);
 const INVALID_FUNDING_AUTHORITY: ProgramError = ProgramError::Custom(7);
-// Do not enable funding or settlement until a reviewed proof binds the public
-// aggregate to every accepted private bid.
+// Keep all pool funding and settlement disabled until proof verification,
+// runtime CPI behavior, trustee authorization, and cross-pool release controls
+// have been validated.
 const AGGREGATE_DECRYPTION_PROOF_READY: bool = false;
 
-pub fn derive_auction_id(
-    program_id: &Pubkey,
-    authority: &Pubkey,
-    nonce: &[u8; 32],
-) -> [u8; 32] {
+pub fn derive_auction_id(program_id: &Pubkey, authority: &Pubkey, nonce: &[u8; 32]) -> [u8; 32] {
     hashv(&[
         AUCTION_ID_DOMAIN,
         program_id.as_ref(),
@@ -56,6 +57,20 @@ pub fn derive_auction_id(
         nonce,
     ])
     .to_bytes()
+}
+
+fn require_trustee_operator_identity(
+    operator_key: &Pubkey,
+    is_signer: bool,
+    trustee_id: &[u8; 32],
+) -> Result<(), ProgramError> {
+    if !is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if operator_key.to_bytes() != *trustee_id {
+        return Err(INVALID_CONFIGURATION);
+    }
+    Ok(())
 }
 
 pub fn process(
@@ -70,7 +85,6 @@ pub fn process(
             confidential_vault,
             output_mint,
             vault,
-            total_bid_amount,
             total_output_amount,
         } => initialize(
             program_id,
@@ -80,8 +94,22 @@ pub fn process(
             &confidential_vault,
             &output_mint,
             &vault,
-            total_bid_amount,
             total_output_amount,
+        ),
+        ClaimsInstruction::ConfigureTrustees {
+            key_epoch,
+            trustee_ids,
+            verification_shares,
+            proof,
+            public_values,
+        } => configure_trustees(
+            program_id,
+            accounts,
+            &key_epoch,
+            &trustee_ids,
+            &verification_shares,
+            proof,
+            public_values,
         ),
         ClaimsInstruction::FundBid {
             new_source_decryptable_balance,
@@ -95,7 +123,10 @@ pub fn process(
             public_values,
         ),
         ClaimsInstruction::FinalizeFunding => finalize_funding(program_id, accounts),
-        ClaimsInstruction::Settle => settle(program_id, accounts),
+        ClaimsInstruction::Settle {
+            proof,
+            public_values,
+        } => settle(program_id, accounts, proof, public_values),
         ClaimsInstruction::RegisterClaim {
             proof,
             public_values,
@@ -115,17 +146,12 @@ fn initialize(
     confidential_vault_bytes: &[u8; 32],
     output_mint_bytes: &[u8; 32],
     vault_bytes: &[u8; 32],
-    total_bid_amount: u64,
     total_output_amount: u64,
 ) -> Result<(), ProgramError> {
     if !AGGREGATE_DECRYPTION_PROOF_READY {
         return Err(INVALID_CONFIGURATION);
     }
-    if accounts.len() != 11
-        || total_bid_amount == 0
-        || total_bid_amount > MAX_TOTAL_BID_AMOUNT
-        || total_output_amount == 0
-    {
+    if accounts.len() != 11 || total_output_amount == 0 {
         return Err(INVALID_CONFIGURATION);
     }
     let account_info_iter = &mut accounts.iter();
@@ -194,9 +220,10 @@ fn initialize(
         StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&funding_mint_data)?;
     let confidential_mint_extension =
         funding_mint_state.get_extension::<ConfidentialTransferMint>()?;
-    let auditor_pubkey = read_32(bytes_of(
-        &confidential_mint_extension.auditor_elgamal_pubkey,
-    ), 0)?;
+    let auditor_pubkey = read_32(
+        bytes_of(&confidential_mint_extension.auditor_elgamal_pubkey),
+        0,
+    )?;
     if auditor_pubkey == [0; 32] {
         return Err(INVALID_CONFIDENTIAL_TRANSFER);
     }
@@ -290,11 +317,67 @@ fn initialize(
         confidential_vault_elgamal_pubkey,
         output_mint.key.to_bytes(),
         vault.key.to_bytes(),
-        total_bid_amount,
         total_output_amount,
     );
     state.pack(&mut pool_account.try_borrow_mut_data()?)?;
     Ok(())
+}
+
+fn configure_trustees(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    key_epoch: &[u8; 32],
+    trustee_ids: &[[u8; 32]; 3],
+    verification_shares: &[[u8; 32]; 3],
+    proof: &[u8],
+    public_values: &[u8],
+) -> Result<(), ProgramError> {
+    if accounts.len() != 5
+        || proof.len() != crate::instruction::SP1_PROOF_LEN
+        || public_values.len() != TRUSTEE_KEY_SETUP_PUBLIC_VALUES_LEN
+    {
+        return Err(INVALID_CONFIGURATION);
+    }
+    let pool_account = &accounts[0];
+    let authority = &accounts[1];
+    let trustee_operators = &accounts[2..5];
+    if !pool_account.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if !authority.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    let mut state = load_pool(program_id, pool_account)?;
+    if authority.key.to_bytes() != state.authority
+        || state.key_epoch != [0; 32]
+        || state.funded_bid_count != 0
+        || state.funding_finalized
+        || state.settled
+    {
+        return Err(INVALID_CONFIGURATION);
+    }
+    for (operator, trustee_id) in trustee_operators.iter().zip(trustee_ids) {
+        require_trustee_operator_identity(operator.key, operator.is_signer, trustee_id)?;
+    }
+
+    let statement = TrusteeKeySetupStatement {
+        program_id: program_id.to_bytes(),
+        funding_mint: state.funding_mint,
+        auditor_pubkey: state.auditor_pubkey,
+        key_epoch: *key_epoch,
+        trustee_ids: *trustee_ids,
+        verification_shares: *verification_shares,
+    };
+    if public_values != statement.public_values()
+        || sp1_v6::verify_sp1_v6_proof(proof, public_values, guest_vkey_hash()).is_err()
+    {
+        return Err(INVALID_PROOF);
+    }
+
+    state.key_epoch = *key_epoch;
+    state.trustee_ids = *trustee_ids;
+    state.verification_shares = *verification_shares;
+    state.pack(&mut pool_account.try_borrow_mut_data()?)
 }
 
 fn fund_bid(
@@ -346,7 +429,8 @@ fn fund_bid(
     }
 
     let mut state = load_pool(program_id, pool_account)?;
-    if state.funding_finalized
+    if state.key_epoch == [0; 32]
+        || state.funding_finalized
         || state.funded_bid_count as usize >= MAX_FUNDED_BIDS
         || funding_mint.key.to_bytes() != state.funding_mint
         || confidential_vault.key.to_bytes() != state.confidential_vault
@@ -357,9 +441,9 @@ fn fund_bid(
 
     let (expected_confidential_vault_authority, confidential_vault_bump) =
         Pubkey::find_program_address(
-        &[b"confidential-funding-vault", pool_account.key.as_ref()],
-        program_id,
-    );
+            &[b"confidential-funding-vault", pool_account.key.as_ref()],
+            program_id,
+        );
     if confidential_vault_authority.key != &expected_confidential_vault_authority {
         return Err(INVALID_TOKEN_ACCOUNTS);
     }
@@ -368,9 +452,10 @@ fn fund_bid(
         StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&funding_mint_data)?;
     let confidential_mint_extension =
         funding_mint_state.get_extension::<ConfidentialTransferMint>()?;
-    let auditor_pubkey = read_32(bytes_of(
-        &confidential_mint_extension.auditor_elgamal_pubkey,
-    ), 0)?;
+    let auditor_pubkey = read_32(
+        bytes_of(&confidential_mint_extension.auditor_elgamal_pubkey),
+        0,
+    )?;
 
     let source_data = source.try_borrow_data()?;
     let source_state = StateWithExtensions::<spl_token_2022::state::Account>::unpack(&source_data)?;
@@ -449,11 +534,17 @@ fn fund_bid(
     let new_source_decryptable_balance =
         try_pod_read_unaligned::<DecryptableBalance>(new_source_decryptable_balance_bytes)
             .map_err(|_| INVALID_CONFIDENTIAL_TRANSFER)?;
+    let auditor_ciphertext_low_bytes: [u8; 64] = public_values[256..320]
+        .try_into()
+        .map_err(|_| INVALID_PUBLIC_VALUES)?;
+    let auditor_ciphertext_high_bytes: [u8; 64] = public_values[320..384]
+        .try_into()
+        .map_err(|_| INVALID_PUBLIC_VALUES)?;
     let auditor_ciphertext_low =
-        try_pod_read_unaligned::<EncryptedBalance>(&public_values[256..320])
+        try_pod_read_unaligned::<EncryptedBalance>(&auditor_ciphertext_low_bytes)
             .map_err(|_| INVALID_PUBLIC_VALUES)?;
     let auditor_ciphertext_high =
-        try_pod_read_unaligned::<EncryptedBalance>(&public_values[320..384])
+        try_pod_read_unaligned::<EncryptedBalance>(&auditor_ciphertext_high_bytes)
             .map_err(|_| INVALID_PUBLIC_VALUES)?;
 
     drop(confidential_vault_state);
@@ -529,15 +620,14 @@ fn fund_bid(
     let empty_decryptable_balance =
         try_pod_read_unaligned::<DecryptableBalance>(&empty_decryptable_balance_bytes)
             .map_err(|_| INVALID_CONFIDENTIAL_TRANSFER)?;
-    let apply_pending_balance =
-        confidential_transfer_instruction::inner_apply_pending_balance(
-            token_2022_program.key,
-            confidential_vault.key,
-            pending_balance_credit_counter,
-            &empty_decryptable_balance,
-            confidential_vault_authority.key,
-            &[],
-        )?;
+    let apply_pending_balance = confidential_transfer_instruction::inner_apply_pending_balance(
+        token_2022_program.key,
+        confidential_vault.key,
+        pending_balance_credit_counter,
+        &empty_decryptable_balance,
+        confidential_vault_authority.key,
+        &[],
+    )?;
     invoke_signed(
         &apply_pending_balance,
         &[
@@ -573,14 +663,16 @@ fn fund_bid(
         ]],
     )?;
 
-    state.append_funded_bid(bid_commitment, transfer_context_hash)?;
+    state.append_funded_bid(
+        bid_commitment,
+        transfer_context_hash,
+        auditor_ciphertext_low_bytes,
+        auditor_ciphertext_high_bytes,
+    )?;
     state.pack(&mut pool_account.try_borrow_mut_data()?)
 }
 
-fn finalize_funding(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-) -> Result<(), ProgramError> {
+fn finalize_funding(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<(), ProgramError> {
     if accounts.len() != 2 {
         return Err(INVALID_CONFIGURATION);
     }
@@ -593,18 +685,26 @@ fn finalize_funding(
         return Err(ProgramError::MissingRequiredSignature);
     }
     let mut state = load_pool(program_id, pool_account)?;
-    if authority.key.to_bytes() != state.authority {
+    if authority.key.to_bytes() != state.authority || state.key_epoch == [0; 32] {
         return Err(INVALID_FUNDING_AUTHORITY);
     }
     state.finalize_funding()?;
     state.pack(&mut pool_account.try_borrow_mut_data()?)
 }
 
-fn settle(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<(), ProgramError> {
+fn settle(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    proof: &[u8],
+    public_values: &[u8],
+) -> Result<(), ProgramError> {
     if !AGGREGATE_DECRYPTION_PROOF_READY {
         return Err(INVALID_CONFIGURATION);
     }
-    if accounts.len() != 19 {
+    if accounts.len() != 22
+        || proof.len() != crate::instruction::SP1_PROOF_LEN
+        || public_values.len() != AGGREGATE_DECRYPTION_PUBLIC_VALUES_LEN
+    {
         return Err(INVALID_CONFIGURATION);
     }
     let account_info_iter = &mut accounts.iter();
@@ -669,8 +769,8 @@ fn settle(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<(), ProgramEr
         || !state.funding_finalized
         || state.settled
         || state.funded_bid_count == 0
-        || state.total_bid_amount == 0
-        || state.total_bid_amount > MAX_TOTAL_BID_AMOUNT
+        || state.total_bid_amount != 0
+        || state.key_epoch == [0; 32]
         || state.total_output_amount == 0
         || funding_mint.key.to_bytes() != state.funding_mint
         || confidential_vault.key.to_bytes() != state.confidential_vault
@@ -678,6 +778,36 @@ fn settle(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<(), ProgramEr
         || vault.key.to_bytes() != state.vault
     {
         return Err(INVALID_CONFIGURATION);
+    }
+    for (operator, trustee_id) in accounts[19..22].iter().zip(&state.trustee_ids) {
+        require_trustee_operator_identity(operator.key, operator.is_signer, trustee_id)?;
+    }
+
+    let settlement_bid_amount = read_u64(public_values, 96)?;
+    let aggregate_statement = AggregateDecryptionStatement {
+        program_id: program_id.to_bytes(),
+        pool_account: pool_account.key.to_bytes(),
+        auction_id: state.auction_id,
+        funded_bid_root: state.funded_bid_root,
+        funding_mint: state.funding_mint,
+        confidential_vault: state.confidential_vault,
+        auditor_pubkey: state.auditor_pubkey,
+        key_epoch: state.key_epoch,
+        trustee_ids: state.trustee_ids,
+        verification_shares: state.verification_shares,
+        funded_bid_count: state.funded_bid_count,
+        funded_bid_commitments: state.funded_bid_commitments,
+        accepted_transfer_context_hashes: state.accepted_transfer_context_hashes,
+        aggregate_ciphertext_low: state.aggregate_auditor_ciphertext_low,
+        aggregate_ciphertext_high: state.aggregate_auditor_ciphertext_high,
+        total_bid_amount: settlement_bid_amount,
+    };
+    if public_values != aggregate_statement.public_values()
+        || settlement_bid_amount == 0
+        || settlement_bid_amount > u64::from(state.funded_bid_count) * MAX_BID_AMOUNT
+        || sp1_v6::verify_sp1_v6_proof(proof, public_values, guest_vkey_hash()).is_err()
+    {
+        return Err(INVALID_PROOF);
     }
 
     let (expected_confidential_vault_authority, confidential_vault_bump) =
@@ -688,8 +818,7 @@ fn settle(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<(), ProgramEr
     let (expected_claim_vault_authority, _) =
         Pubkey::find_program_address(&[b"claim-vault", pool_account.key.as_ref()], program_id);
     if confidential_vault_authority.key != &expected_confidential_vault_authority
-        || dbc_pool.key
-            != &dbc::pool_address(dbc_config.key, output_mint.key, funding_mint.key)
+        || dbc_pool.key != &dbc::pool_address(dbc_config.key, output_mint.key, funding_mint.key)
     {
         return Err(INVALID_TOKEN_ACCOUNTS);
     }
@@ -699,9 +828,10 @@ fn settle(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<(), ProgramEr
         StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&funding_mint_data)?;
     let confidential_mint_extension =
         funding_mint_state.get_extension::<ConfidentialTransferMint>()?;
-    let auditor_pubkey = read_32(bytes_of(
-        &confidential_mint_extension.auditor_elgamal_pubkey,
-    ), 0)?;
+    let auditor_pubkey = read_32(
+        bytes_of(&confidential_mint_extension.auditor_elgamal_pubkey),
+        0,
+    )?;
     if auditor_pubkey != state.auditor_pubkey {
         return Err(INVALID_CONFIDENTIAL_TRANSFER);
     }
@@ -768,7 +898,7 @@ fn settle(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<(), ProgramEr
         token_2022_program.key,
         confidential_vault.key,
         funding_mint.key,
-        state.total_bid_amount,
+        settlement_bid_amount,
         funding_decimals,
         &empty_decryptable_balance,
         confidential_vault_authority.key,
@@ -801,7 +931,7 @@ fn settle(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<(), ProgramEr
             )?;
         u64::from(confidential_vault_state.base.amount)
     };
-    if input_after_withdraw != state.total_bid_amount {
+    if input_after_withdraw != settlement_bid_amount {
         return Err(INVALID_CONFIDENTIAL_TRANSFER);
     }
 
@@ -819,7 +949,7 @@ fn settle(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<(), ProgramEr
         confidential_vault_authority.key,
         token_program.key,
         token_2022_program.key,
-        state.total_bid_amount,
+        settlement_bid_amount,
         state.total_output_amount,
     );
     invoke_signed(
@@ -868,7 +998,7 @@ fn settle(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<(), ProgramEr
     if actual_output < state.total_output_amount {
         return Err(INVALID_CONFIGURATION);
     }
-    state.finalize_settlement(actual_output)?;
+    state.finalize_settlement(settlement_bid_amount, actual_output)?;
     state.pack(&mut pool_account.try_borrow_mut_data()?)
 }
 
@@ -975,11 +1105,7 @@ fn redeem(
             vault_authority.clone(),
             token_program.clone(),
         ],
-        &[&[
-            b"claim-vault",
-            pool_account.key.as_ref(),
-            &[vault_bump],
-        ]],
+        &[&[b"claim-vault", pool_account.key.as_ref(), &[vault_bump]]],
     )?;
 
     state.pack(&mut pool_account.try_borrow_mut_data()?)
@@ -1057,11 +1183,7 @@ fn create_pool_account<'a>(
     )
 }
 
-fn claim_public_values_match(
-    program_id: &Pubkey,
-    state: &ClaimPool,
-    public_values: &[u8],
-) -> bool {
+fn claim_public_values_match(program_id: &Pubkey, state: &ClaimPool, public_values: &[u8]) -> bool {
     state.funding_finalized
         && state.settled
         && state.funded_bid_count > 0
@@ -1150,7 +1272,8 @@ fn guest_vkey_hash() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        claim_public_values_match, derive_auction_id, redemption_public_values_match, safe_vault,
+        claim_public_values_match, derive_auction_id, redemption_public_values_match,
+        require_trustee_operator_identity, safe_vault,
     };
     use crate::state::ClaimPool;
     use solana_program::{program_option::COption, pubkey::Pubkey};
@@ -1158,21 +1281,14 @@ mod tests {
 
     fn state() -> ClaimPool {
         let mut state = ClaimPool::new(
-            [1; 32],
-            [2; 32],
-            [3; 32],
-            [4; 32],
-            [5; 32],
-            [6; 32],
-            [7; 32],
-            [8; 32],
-            100,
-            1_000,
+            [1; 32], [2; 32], [3; 32], [4; 32], [5; 32], [6; 32], [7; 32], [8; 32], 1_000,
         );
-        state.append_funded_bid([9; 32], [10; 32]).unwrap();
+        state
+            .append_funded_bid([9; 32], [10; 32], [0; 64], [0; 64])
+            .unwrap();
         state.finalize_funding().unwrap();
         state
-            .finalize_settlement(state.total_output_amount)
+            .finalize_settlement(100, state.total_output_amount)
             .unwrap();
         state
     }
@@ -1184,10 +1300,35 @@ mod tests {
         let nonce = [11; 32];
         let auction_id = derive_auction_id(&program_id, &authority, &nonce);
 
-        assert_eq!(auction_id, derive_auction_id(&program_id, &authority, &nonce));
+        assert_eq!(
+            auction_id,
+            derive_auction_id(&program_id, &authority, &nonce)
+        );
         assert_ne!(
             auction_id,
             derive_auction_id(&program_id, &Pubkey::new_from_array([12; 32]), &nonce)
+        );
+    }
+
+    #[test]
+    fn trustee_operator_must_sign_as_the_registered_pubkey() {
+        let operators = [
+            Pubkey::new_from_array([31; 32]),
+            Pubkey::new_from_array([32; 32]),
+            Pubkey::new_from_array([33; 32]),
+        ];
+        let ids = operators.map(|operator| operator.to_bytes());
+
+        for (operator, trustee_id) in operators.iter().zip(&ids) {
+            assert!(require_trustee_operator_identity(operator, true, trustee_id).is_ok());
+        }
+        assert_eq!(
+            require_trustee_operator_identity(&operators[0], false, &ids[0]),
+            Err(solana_program::program_error::ProgramError::MissingRequiredSignature)
+        );
+        assert_eq!(
+            require_trustee_operator_identity(&operators[0], true, &ids[1]),
+            Err(solana_program::program_error::ProgramError::Custom(3))
         );
     }
 
@@ -1204,7 +1345,7 @@ mod tests {
     fn settlement_stays_fail_closed_until_aggregate_proof_is_ready() {
         let program_id = Pubkey::new_from_array([9; 32]);
         assert!(matches!(
-            super::settle(&program_id, &[]),
+            super::settle(&program_id, &[], &[], &[]),
             Err(solana_program::program_error::ProgramError::Custom(3))
         ));
     }
@@ -1221,7 +1362,6 @@ mod tests {
                 &[0; 32],
                 &[0; 32],
                 &[0; 32],
-                0,
                 0,
             ),
             Err(solana_program::program_error::ProgramError::Custom(3))

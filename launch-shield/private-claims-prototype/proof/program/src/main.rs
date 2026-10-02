@@ -3,6 +3,11 @@
 sp1_zkvm::entrypoint!(main);
 
 use private_claims_proof_relation::{
+    aggregate::{
+        verify_aggregate_decryption_relation, verify_trustee_key_setup_relation,
+        AggregateDecryptionStatement, AggregateDecryptionWitness, TrusteeKeySetupStatement,
+    },
+    threshold::{DleqProof, TrusteeDecryptionStep, TrusteeKeyTransformStep, TRUSTEE_COUNT},
     verify_claim_relation, verify_funding_relation, verify_redemption_relation, ClaimStatement,
     ClaimWitness, FundingStatement, FundingWitness, RedemptionStatement, RedemptionWitness,
     BID_MERKLE_DEPTH,
@@ -13,8 +18,88 @@ pub fn main() {
         0 => prove_funding(),
         1 => prove_claim(),
         2 => prove_redemption(),
+        3 => prove_aggregate_decryption(),
+        4 => prove_trustee_key_setup(),
         _ => panic!("unknown private-claims proof kind"),
     }
+}
+
+fn read_dleq_proof() -> DleqProof {
+    DleqProof {
+        commitment_base: sp1_zkvm::io::read::<[u8; 32]>(),
+        commitment_input: sp1_zkvm::io::read::<[u8; 32]>(),
+        response: sp1_zkvm::io::read::<[u8; 32]>(),
+    }
+}
+
+fn read_key_setup_steps() -> [TrusteeKeyTransformStep; TRUSTEE_COUNT] {
+    core::array::from_fn(|_| TrusteeKeyTransformStep {
+        trustee_id: sp1_zkvm::io::read::<[u8; 32]>(),
+        derived_public_key: sp1_zkvm::io::read::<[u8; 32]>(),
+        proof: read_dleq_proof(),
+    })
+}
+
+fn read_decryption_steps() -> [TrusteeDecryptionStep; TRUSTEE_COUNT] {
+    core::array::from_fn(|_| TrusteeDecryptionStep {
+        trustee_id: sp1_zkvm::io::read::<[u8; 32]>(),
+        output_point: sp1_zkvm::io::read::<[u8; 32]>(),
+        proof: read_dleq_proof(),
+    })
+}
+
+fn read_ciphertext() -> [u8; 64] {
+    let mut ciphertext = [0; 64];
+    ciphertext[..32].copy_from_slice(&sp1_zkvm::io::read::<[u8; 32]>());
+    ciphertext[32..].copy_from_slice(&sp1_zkvm::io::read::<[u8; 32]>());
+    ciphertext
+}
+
+fn prove_aggregate_decryption() {
+    let statement = AggregateDecryptionStatement {
+        program_id: sp1_zkvm::io::read::<[u8; 32]>(),
+        pool_account: sp1_zkvm::io::read::<[u8; 32]>(),
+        auction_id: sp1_zkvm::io::read::<[u8; 32]>(),
+        funded_bid_root: sp1_zkvm::io::read::<[u8; 32]>(),
+        funding_mint: sp1_zkvm::io::read::<[u8; 32]>(),
+        confidential_vault: sp1_zkvm::io::read::<[u8; 32]>(),
+        auditor_pubkey: sp1_zkvm::io::read::<[u8; 32]>(),
+        key_epoch: sp1_zkvm::io::read::<[u8; 32]>(),
+        trustee_ids: core::array::from_fn(|_| sp1_zkvm::io::read::<[u8; 32]>()),
+        verification_shares: core::array::from_fn(|_| sp1_zkvm::io::read::<[u8; 32]>()),
+        funded_bid_count: sp1_zkvm::io::read::<u8>(),
+        funded_bid_commitments: core::array::from_fn(|_| sp1_zkvm::io::read::<[u8; 32]>()),
+        accepted_transfer_context_hashes: core::array::from_fn(|_| {
+            sp1_zkvm::io::read::<[u8; 32]>()
+        }),
+        aggregate_ciphertext_low: read_ciphertext(),
+        aggregate_ciphertext_high: read_ciphertext(),
+        total_bid_amount: sp1_zkvm::io::read::<u64>(),
+    };
+    let witness = AggregateDecryptionWitness {
+        key_setup_steps: read_key_setup_steps(),
+        low_steps: read_decryption_steps(),
+        high_steps: read_decryption_steps(),
+        low_total: sp1_zkvm::io::read::<u64>(),
+        high_total: sp1_zkvm::io::read::<u64>(),
+    };
+
+    assert!(verify_aggregate_decryption_relation(&statement, &witness));
+    sp1_zkvm::io::commit_slice(&statement.public_values());
+}
+
+fn prove_trustee_key_setup() {
+    let statement = TrusteeKeySetupStatement {
+        program_id: sp1_zkvm::io::read::<[u8; 32]>(),
+        funding_mint: sp1_zkvm::io::read::<[u8; 32]>(),
+        auditor_pubkey: sp1_zkvm::io::read::<[u8; 32]>(),
+        key_epoch: sp1_zkvm::io::read::<[u8; 32]>(),
+        trustee_ids: core::array::from_fn(|_| sp1_zkvm::io::read::<[u8; 32]>()),
+        verification_shares: core::array::from_fn(|_| sp1_zkvm::io::read::<[u8; 32]>()),
+    };
+    let steps = read_key_setup_steps();
+    assert!(verify_trustee_key_setup_relation(&statement, &steps));
+    sp1_zkvm::io::commit_slice(&statement.public_values());
 }
 
 fn prove_funding() {

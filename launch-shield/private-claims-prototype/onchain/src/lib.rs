@@ -5,7 +5,7 @@ use solana_program::{
 };
 
 mod instruction;
-mod dbc;
+pub mod dbc;
 mod processor;
 mod state;
 

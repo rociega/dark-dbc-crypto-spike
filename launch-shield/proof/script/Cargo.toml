@@ -12,16 +12,22 @@ required-features = ["sp1-executor"]
 [features]
 sp1-executor = ["dep:sp1-sdk"]
 sp1-prover = ["sp1-executor", "dep:hex", "sp1-sdk/native-gnark"]
+sp1-network = ["sp1-executor", "dep:hex", "sp1-sdk/network"]
 
 [[bin]]
 name = "launch-shield-vkey"
 path = "src/bin/vkey.rs"
-required-features = ["sp1-prover"]
+required-features = ["sp1-executor"]
 
 [[bin]]
 name = "launch-shield-prove"
 path = "src/bin/prove.rs"
 required-features = ["sp1-prover"]
+
+[[bin]]
+name = "launch-shield-prove-network"
+path = "src/bin/prove_network.rs"
+required-features = ["sp1-network"]
 
 [dependencies]
 launch-shield-proof-relation = { path = "../relation" }

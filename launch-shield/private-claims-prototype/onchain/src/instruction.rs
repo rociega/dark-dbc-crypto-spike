@@ -1,12 +1,15 @@
 use solana_program::program_error::ProgramError;
 
+use private_claims_proof_relation::aggregate::{
+    AGGREGATE_DECRYPTION_PUBLIC_VALUES_LEN, TRUSTEE_KEY_SETUP_PUBLIC_VALUES_LEN,
+};
+
 pub const SP1_PROOF_LEN: usize = 356;
 pub const BID_PUBLIC_VALUES_LEN: usize = 200;
 pub const CLAIM_PUBLIC_VALUES_LEN: usize = 208;
 pub const FUNDING_PUBLIC_VALUES_LEN: usize = private_claims_proof_relation::PUBLIC_VALUES_LEN;
-pub const DECRYPTABLE_BALANCE_LEN: usize = std::mem::size_of::<
-    spl_token_2022::extension::confidential_transfer::DecryptableBalance,
->();
+pub const DECRYPTABLE_BALANCE_LEN: usize =
+    std::mem::size_of::<spl_token_2022::extension::confidential_transfer::DecryptableBalance>();
 
 pub enum ClaimsInstruction<'a> {
     Initialize {
@@ -15,8 +18,14 @@ pub enum ClaimsInstruction<'a> {
         confidential_vault: [u8; 32],
         output_mint: [u8; 32],
         vault: [u8; 32],
-        total_bid_amount: u64,
         total_output_amount: u64,
+    },
+    ConfigureTrustees {
+        key_epoch: [u8; 32],
+        trustee_ids: [[u8; 32]; 3],
+        verification_shares: [[u8; 32]; 3],
+        proof: &'a [u8],
+        public_values: &'a [u8],
     },
     FundBid {
         new_source_decryptable_balance: &'a [u8],
@@ -24,7 +33,10 @@ pub enum ClaimsInstruction<'a> {
         public_values: &'a [u8],
     },
     FinalizeFunding,
-    Settle,
+    Settle {
+        proof: &'a [u8],
+        public_values: &'a [u8],
+    },
     RegisterClaim {
         proof: &'a [u8],
         public_values: &'a [u8],
@@ -37,10 +49,12 @@ pub enum ClaimsInstruction<'a> {
 
 impl<'a> ClaimsInstruction<'a> {
     pub fn unpack(input: &'a [u8]) -> Result<Self, ProgramError> {
-        let (tag, body) = input.split_first().ok_or(ProgramError::InvalidInstructionData)?;
+        let (tag, body) = input
+            .split_first()
+            .ok_or(ProgramError::InvalidInstructionData)?;
         match tag {
             0 => {
-                if body.len() != 32 * 5 + 16 {
+                if body.len() != 32 * 5 + 8 {
                     return Err(ProgramError::InvalidInstructionData);
                 }
                 let mut offset = 0;
@@ -49,7 +63,6 @@ impl<'a> ClaimsInstruction<'a> {
                 let confidential_vault = read_array(body, &mut offset)?;
                 let output_mint = read_array(body, &mut offset)?;
                 let vault = read_array(body, &mut offset)?;
-                let total_bid_amount = read_u64(body, &mut offset)?;
                 let total_output_amount = read_u64(body, &mut offset)?;
                 Ok(Self::Initialize {
                     nonce,
@@ -57,8 +70,34 @@ impl<'a> ClaimsInstruction<'a> {
                     confidential_vault,
                     output_mint,
                     vault,
-                    total_bid_amount,
                     total_output_amount,
+                })
+            }
+            6 => {
+                let expected_len =
+                    32 + 3 * 32 + 3 * 32 + SP1_PROOF_LEN + TRUSTEE_KEY_SETUP_PUBLIC_VALUES_LEN;
+                if body.len() != expected_len {
+                    return Err(ProgramError::InvalidInstructionData);
+                }
+                let mut offset = 0;
+                let key_epoch = read_array(body, &mut offset)?;
+                let mut trustee_ids = [[0; 32]; 3];
+                for trustee_id in &mut trustee_ids {
+                    *trustee_id = read_array(body, &mut offset)?;
+                }
+                let mut verification_shares = [[0; 32]; 3];
+                for share in &mut verification_shares {
+                    *share = read_array(body, &mut offset)?;
+                }
+                let proof_end = offset + SP1_PROOF_LEN;
+                let proof = &body[offset..proof_end];
+                let public_values = &body[proof_end..];
+                Ok(Self::ConfigureTrustees {
+                    key_epoch,
+                    trustee_ids,
+                    verification_shares,
+                    proof,
+                    public_values,
                 })
             }
             3 => {
@@ -76,7 +115,15 @@ impl<'a> ClaimsInstruction<'a> {
                 })
             }
             4 if body.is_empty() => Ok(Self::FinalizeFunding),
-            5 if body.is_empty() => Ok(Self::Settle),
+            5 => {
+                if body.len() != SP1_PROOF_LEN + AGGREGATE_DECRYPTION_PUBLIC_VALUES_LEN {
+                    return Err(ProgramError::InvalidInstructionData);
+                }
+                Ok(Self::Settle {
+                    proof: &body[..SP1_PROOF_LEN],
+                    public_values: &body[SP1_PROOF_LEN..],
+                })
+            }
             1 => {
                 if body.len() != SP1_PROOF_LEN + CLAIM_PUBLIC_VALUES_LEN {
                     return Err(ProgramError::InvalidInstructionData);
@@ -100,10 +147,7 @@ impl<'a> ClaimsInstruction<'a> {
     }
 }
 
-fn read_array<const N: usize>(
-    input: &[u8],
-    offset: &mut usize,
-) -> Result<[u8; N], ProgramError> {
+fn read_array<const N: usize>(input: &[u8], offset: &mut usize) -> Result<[u8; N], ProgramError> {
     let end = offset
         .checked_add(N)
         .ok_or(ProgramError::InvalidInstructionData)?;
@@ -123,13 +167,14 @@ fn read_u64(input: &[u8], offset: &mut usize) -> Result<u64, ProgramError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaimsInstruction, BID_PUBLIC_VALUES_LEN, CLAIM_PUBLIC_VALUES_LEN, DECRYPTABLE_BALANCE_LEN,
-        FUNDING_PUBLIC_VALUES_LEN, SP1_PROOF_LEN,
+        ClaimsInstruction, AGGREGATE_DECRYPTION_PUBLIC_VALUES_LEN, BID_PUBLIC_VALUES_LEN,
+        CLAIM_PUBLIC_VALUES_LEN, DECRYPTABLE_BALANCE_LEN, FUNDING_PUBLIC_VALUES_LEN, SP1_PROOF_LEN,
+        TRUSTEE_KEY_SETUP_PUBLIC_VALUES_LEN,
     };
 
     #[test]
     fn instruction_decoder_enforces_exact_payload_lengths() {
-        let initialize = [vec![0], vec![0; 32 * 5 + 16]].concat();
+        let initialize = [vec![0], vec![0; 32 * 5 + 8]].concat();
         assert!(matches!(
             ClaimsInstruction::unpack(&initialize),
             Ok(ClaimsInstruction::Initialize { .. })
@@ -160,9 +205,24 @@ mod tests {
             ClaimsInstruction::unpack(&[4]),
             Ok(ClaimsInstruction::FinalizeFunding)
         ));
+        let configure_trustees = [
+            vec![6],
+            vec![0; 32 + 3 * 32 + 3 * 32 + SP1_PROOF_LEN + TRUSTEE_KEY_SETUP_PUBLIC_VALUES_LEN],
+        ]
+        .concat();
         assert!(matches!(
-            ClaimsInstruction::unpack(&[5]),
-            Ok(ClaimsInstruction::Settle)
+            ClaimsInstruction::unpack(&configure_trustees),
+            Ok(ClaimsInstruction::ConfigureTrustees { .. })
+        ));
+        assert!(matches!(
+            ClaimsInstruction::unpack(
+                &[
+                    vec![5],
+                    vec![0; SP1_PROOF_LEN + AGGREGATE_DECRYPTION_PUBLIC_VALUES_LEN]
+                ]
+                .concat()
+            ),
+            Ok(ClaimsInstruction::Settle { .. })
         ));
     }
 

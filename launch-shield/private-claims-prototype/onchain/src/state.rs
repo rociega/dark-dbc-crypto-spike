@@ -1,13 +1,10 @@
-use solana_program::{
-    hash::hashv,
-    program_error::ProgramError,
-};
+use solana_program::{hash::hashv, program_error::ProgramError};
 
 pub const MAX_CLAIMS: usize = 8;
 pub const MAX_FUNDED_BIDS: usize = private_claims_proof_relation::MAX_FUNDED_BIDS;
-pub const CLAIM_POOL_DATA_LEN: usize = 1_590;
+pub const CLAIM_POOL_DATA_LEN: usize = 1_942;
 
-const STATE_VERSION: u8 = 3;
+const STATE_VERSION: u8 = 6;
 const NOTE_LEAF_DOMAIN: &[u8] = b"private-claims:note-leaf:test-v1";
 const NOTE_NODE_DOMAIN: &[u8] = b"private-claims:note-node:test-v1";
 const INVALID_STATE: ProgramError = ProgramError::InvalidAccountData;
@@ -21,6 +18,10 @@ pub struct ClaimPool {
     pub funding_mint: [u8; 32],
     pub confidential_vault: [u8; 32],
     pub auditor_pubkey: [u8; 32],
+    pub key_epoch: [u8; 32],
+    /// Solana operator Pubkeys, in the same order as their verification shares.
+    pub trustee_ids: [[u8; 32]; 3],
+    pub verification_shares: [[u8; 32]; 3],
     pub confidential_vault_elgamal_pubkey: [u8; 32],
     pub output_mint: [u8; 32],
     pub vault: [u8; 32],
@@ -29,6 +30,8 @@ pub struct ClaimPool {
     pub funded_bid_count: u8,
     pub funded_bid_commitments: [[u8; 32]; MAX_FUNDED_BIDS],
     pub accepted_transfer_context_hashes: [[u8; 32]; MAX_FUNDED_BIDS],
+    pub aggregate_auditor_ciphertext_low: [u8; 64],
+    pub aggregate_auditor_ciphertext_high: [u8; 64],
     pub funding_finalized: bool,
     pub settled: bool,
     pub note_count: u8,
@@ -48,7 +51,6 @@ impl ClaimPool {
         confidential_vault_elgamal_pubkey: [u8; 32],
         output_mint: [u8; 32],
         vault: [u8; 32],
-        total_bid_amount: u64,
         total_output_amount: u64,
     ) -> Self {
         let funded_bid_commitments = [[0; 32]; MAX_FUNDED_BIDS];
@@ -61,14 +63,19 @@ impl ClaimPool {
             funding_mint,
             confidential_vault,
             auditor_pubkey,
+            key_epoch: [0; 32],
+            trustee_ids: [[0; 32]; 3],
+            verification_shares: [[0; 32]; 3],
             confidential_vault_elgamal_pubkey,
             output_mint,
             vault,
-            total_bid_amount,
+            total_bid_amount: 0,
             total_output_amount,
             funded_bid_count: 0,
             funded_bid_commitments,
             accepted_transfer_context_hashes: [[0; 32]; MAX_FUNDED_BIDS],
+            aggregate_auditor_ciphertext_low: [0; 64],
+            aggregate_auditor_ciphertext_high: [0; 64],
             funding_finalized: false,
             settled: false,
             note_count: 0,
@@ -83,20 +90,40 @@ impl ClaimPool {
         &mut self,
         bid_commitment: [u8; 32],
         transfer_context_hash: [u8; 32],
+        auditor_ciphertext_low: [u8; 64],
+        auditor_ciphertext_high: [u8; 64],
     ) -> Result<(), ProgramError> {
         let count = usize::from(self.funded_bid_count);
         if self.funding_finalized
             || count >= MAX_FUNDED_BIDS
             || bid_commitment == [0; 32]
             || transfer_context_hash == [0; 32]
+            || (count == 0
+                && (self.aggregate_auditor_ciphertext_low != [0; 64]
+                    || self.aggregate_auditor_ciphertext_high != [0; 64]))
             || self.funded_bid_commitments[..count].contains(&bid_commitment)
             || self.accepted_transfer_context_hashes[..count].contains(&transfer_context_hash)
         {
             return Err(INVALID_TRANSITION);
         }
 
+        let aggregate_auditor_ciphertext_low =
+            private_claims_proof_relation::add_elgamal_ciphertexts(
+                &self.aggregate_auditor_ciphertext_low,
+                &auditor_ciphertext_low,
+            )
+            .ok_or(INVALID_TRANSITION)?;
+        let aggregate_auditor_ciphertext_high =
+            private_claims_proof_relation::add_elgamal_ciphertexts(
+                &self.aggregate_auditor_ciphertext_high,
+                &auditor_ciphertext_high,
+            )
+            .ok_or(INVALID_TRANSITION)?;
+
         self.funded_bid_commitments[count] = bid_commitment;
         self.accepted_transfer_context_hashes[count] = transfer_context_hash;
+        self.aggregate_auditor_ciphertext_low = aggregate_auditor_ciphertext_low;
+        self.aggregate_auditor_ciphertext_high = aggregate_auditor_ciphertext_high;
         self.funded_bid_count += 1;
         self.funded_bid_root = self.computed_funded_bid_root();
         Ok(())
@@ -106,18 +133,31 @@ impl ClaimPool {
         if self.funding_finalized || self.funded_bid_count == 0 {
             return Err(INVALID_TRANSITION);
         }
+        validate_aggregate_ciphertexts(
+            &self.aggregate_auditor_ciphertext_low,
+            &self.aggregate_auditor_ciphertext_high,
+            self.funded_bid_count,
+        )?;
         self.funding_finalized = true;
         Ok(())
     }
 
-    pub fn finalize_settlement(&mut self, actual_output_amount: u64) -> Result<(), ProgramError> {
+    pub fn finalize_settlement(
+        &mut self,
+        proven_bid_amount: u64,
+        actual_output_amount: u64,
+    ) -> Result<(), ProgramError> {
         if !self.funding_finalized
             || self.settled
-            || self.total_bid_amount == 0
+            || self.total_bid_amount != 0
+            || proven_bid_amount == 0
+            || proven_bid_amount
+                > u64::from(self.funded_bid_count) * private_claims_proof_relation::MAX_BID_AMOUNT
             || actual_output_amount == 0
         {
             return Err(INVALID_TRANSITION);
         }
+        self.total_bid_amount = proven_bid_amount;
         self.total_output_amount = actual_output_amount;
         self.settled = true;
         Ok(())
@@ -134,12 +174,8 @@ impl ClaimPool {
         let mut nodes = MAX_CLAIMS;
         while nodes > 1 {
             for index in 0..nodes / 2 {
-                level[index] = hashv(&[
-                    NOTE_NODE_DOMAIN,
-                    &level[index * 2],
-                    &level[index * 2 + 1],
-                ])
-                .to_bytes();
+                level[index] =
+                    hashv(&[NOTE_NODE_DOMAIN, &level[index * 2], &level[index * 2 + 1]]).to_bytes();
             }
             nodes /= 2;
         }
@@ -195,10 +231,18 @@ impl ClaimPool {
             || (self.settled
                 && (!self.funding_finalized
                     || self.total_bid_amount == 0
+                    || self.total_bid_amount
+                        > u64::from(self.funded_bid_count)
+                            * private_claims_proof_relation::MAX_BID_AMOUNT
                     || self.total_output_amount == 0))
         {
             return Err(INVALID_STATE);
         }
+        validate_trustee_registry(
+            &self.key_epoch,
+            &self.trustee_ids,
+            &self.verification_shares,
+        )?;
         validate_funded_slots(
             &self.funded_bid_commitments,
             &self.accepted_transfer_context_hashes,
@@ -221,6 +265,17 @@ impl ClaimPool {
             &self.funding_mint,
             &self.confidential_vault,
             &self.auditor_pubkey,
+        ] {
+            write_bytes(output, &mut offset, field)?;
+        }
+        write_bytes(output, &mut offset, &self.key_epoch)?;
+        for trustee_id in &self.trustee_ids {
+            write_bytes(output, &mut offset, trustee_id)?;
+        }
+        for share in &self.verification_shares {
+            write_bytes(output, &mut offset, share)?;
+        }
+        for field in [
             &self.confidential_vault_elgamal_pubkey,
             &self.output_mint,
             &self.vault,
@@ -237,6 +292,8 @@ impl ClaimPool {
         for field in &self.accepted_transfer_context_hashes {
             write_bytes(output, &mut offset, field)?;
         }
+        write_bytes(output, &mut offset, &self.aggregate_auditor_ciphertext_low)?;
+        write_bytes(output, &mut offset, &self.aggregate_auditor_ciphertext_high)?;
         output[offset] = u8::from(self.funding_finalized);
         offset += 1;
         output[offset] = u8::from(self.settled);
@@ -271,6 +328,15 @@ impl ClaimPool {
         let funding_mint = read_array(input, &mut offset)?;
         let confidential_vault = read_array(input, &mut offset)?;
         let auditor_pubkey = read_array(input, &mut offset)?;
+        let key_epoch = read_array(input, &mut offset)?;
+        let mut trustee_ids = [[0; 32]; 3];
+        for trustee_id in &mut trustee_ids {
+            *trustee_id = read_array(input, &mut offset)?;
+        }
+        let mut verification_shares = [[0; 32]; 3];
+        for share in &mut verification_shares {
+            *share = read_array(input, &mut offset)?;
+        }
         let confidential_vault_elgamal_pubkey = read_array(input, &mut offset)?;
         let output_mint = read_array(input, &mut offset)?;
         let vault = read_array(input, &mut offset)?;
@@ -286,6 +352,8 @@ impl ClaimPool {
         for item in &mut accepted_transfer_context_hashes {
             *item = read_array(input, &mut offset)?;
         }
+        let aggregate_auditor_ciphertext_low = read_array(input, &mut offset)?;
+        let aggregate_auditor_ciphertext_high = read_array(input, &mut offset)?;
         let funding_finalized_byte = *input.get(offset).ok_or(INVALID_STATE)?;
         if funding_finalized_byte > 1 {
             return Err(INVALID_STATE);
@@ -320,10 +388,16 @@ impl ClaimPool {
             || usize::from(spent_count) > MAX_CLAIMS
             || (funding_finalized && funded_bid_count == 0)
             || (settled
-                && (!funding_finalized || total_bid_amount == 0 || total_output_amount == 0))
+                && (!funding_finalized
+                    || total_bid_amount == 0
+                    || total_bid_amount
+                        > u64::from(funded_bid_count)
+                            * private_claims_proof_relation::MAX_BID_AMOUNT
+                    || total_output_amount == 0))
         {
             return Err(INVALID_STATE);
         }
+        validate_trustee_registry(&key_epoch, &trustee_ids, &verification_shares)?;
         validate_funded_slots(
             &funded_bid_commitments,
             &accepted_transfer_context_hashes,
@@ -339,6 +413,9 @@ impl ClaimPool {
             funding_mint,
             confidential_vault,
             auditor_pubkey,
+            key_epoch,
+            trustee_ids,
+            verification_shares,
             confidential_vault_elgamal_pubkey,
             output_mint,
             vault,
@@ -347,6 +424,8 @@ impl ClaimPool {
             funded_bid_count,
             funded_bid_commitments,
             accepted_transfer_context_hashes,
+            aggregate_auditor_ciphertext_low,
+            aggregate_auditor_ciphertext_high,
             funding_finalized,
             settled,
             note_count,
@@ -383,6 +462,43 @@ fn validate_funded_slots(
         }
     }
     Ok(())
+}
+
+fn validate_aggregate_ciphertexts(
+    low: &[u8; 64],
+    high: &[u8; 64],
+    funded_bid_count: u8,
+) -> Result<(), ProgramError> {
+    if !private_claims_proof_relation::is_valid_elgamal_ciphertext(low)
+        || !private_claims_proof_relation::is_valid_elgamal_ciphertext(high)
+        || (funded_bid_count == 0 && (*low != [0; 64] || *high != [0; 64]))
+    {
+        return Err(INVALID_STATE);
+    }
+    Ok(())
+}
+
+fn validate_trustee_registry(
+    key_epoch: &[u8; 32],
+    trustee_ids: &[[u8; 32]; 3],
+    verification_shares: &[[u8; 32]; 3],
+) -> Result<(), ProgramError> {
+    if *key_epoch == [0; 32] {
+        if trustee_ids.iter().all(|id| *id == [0; 32])
+            && verification_shares.iter().all(|share| *share == [0; 32])
+        {
+            return Ok(());
+        }
+        return Err(INVALID_STATE);
+    }
+    if private_claims_proof_relation::threshold::is_valid_trustee_registry(
+        trustee_ids,
+        verification_shares,
+    ) {
+        Ok(())
+    } else {
+        Err(INVALID_STATE)
+    }
 }
 
 fn validate_slots(
@@ -424,11 +540,7 @@ fn validate_spent_slots(
     Ok(())
 }
 
-fn write_bytes(
-    output: &mut [u8],
-    offset: &mut usize,
-    bytes: &[u8],
-) -> Result<(), ProgramError> {
+fn write_bytes(output: &mut [u8], offset: &mut usize, bytes: &[u8]) -> Result<(), ProgramError> {
     let end = offset.checked_add(bytes.len()).ok_or(INVALID_STATE)?;
     output
         .get_mut(*offset..end)
@@ -456,20 +568,13 @@ mod tests {
 
     fn pool() -> ClaimPool {
         let mut state = ClaimPool::new(
-            [1; 32],
-            [2; 32],
-            [3; 32],
-            [4; 32],
-            [5; 32],
-            [6; 32],
-            [7; 32],
-            [8; 32],
-            1_000,
-            10_000,
+            [1; 32], [2; 32], [3; 32], [4; 32], [5; 32], [6; 32], [7; 32], [8; 32], 10_000,
         );
-        state.append_funded_bid([9; 32], [10; 32]).unwrap();
+        state
+            .append_funded_bid([9; 32], [10; 32], [0; 64], [0; 64])
+            .unwrap();
         state.finalize_funding().unwrap();
-        state.finalize_settlement(10_000).unwrap();
+        state.finalize_settlement(1_000, 10_000).unwrap();
         state
     }
 
@@ -486,21 +591,54 @@ mod tests {
     }
 
     #[test]
+    fn funding_finalized_state_can_wait_for_a_proven_bid_total() {
+        let mut state = pool();
+        state.settled = false;
+        state.total_bid_amount = 0;
+
+        let mut data = vec![0; CLAIM_POOL_DATA_LEN];
+        state.pack(&mut data).unwrap();
+        assert_eq!(ClaimPool::unpack(&data).unwrap(), state);
+    }
+
+    #[test]
+    fn settlement_rejects_totals_above_the_funded_bid_bound() {
+        let mut state = pool();
+        state.settled = false;
+        state.total_bid_amount = 0;
+        let over_limit = private_claims_proof_relation::MAX_BID_AMOUNT + 1;
+
+        assert_eq!(
+            state.finalize_settlement(over_limit, state.total_output_amount),
+            Err(ProgramError::Custom(1))
+        );
+        assert_eq!(state.total_bid_amount, 0);
+        assert!(!state.settled);
+    }
+
+    #[test]
+    fn partial_trustee_registry_state_is_rejected() {
+        let mut state = pool();
+        state.settled = false;
+        state.total_bid_amount = 0;
+        state.key_epoch = [1; 32];
+
+        let mut data = vec![0; CLAIM_POOL_DATA_LEN];
+        assert_eq!(state.pack(&mut data), Err(ProgramError::InvalidAccountData));
+    }
+
+    #[test]
     fn onchain_note_root_matches_the_guest_relation() {
         let mut state = pool();
         assert_eq!(
             state.note_root(),
-            private_claims_proof_relation::claim_note_merkle_root(
-                &state.note_commitments
-            )
+            private_claims_proof_relation::claim_note_merkle_root(&state.note_commitments)
         );
 
         state.register_note([6; 32], [7; 32]).unwrap();
         assert_eq!(
             state.note_root(),
-            private_claims_proof_relation::claim_note_merkle_root(
-                &state.note_commitments
-            )
+            private_claims_proof_relation::claim_note_merkle_root(&state.note_commitments)
         );
 
         for index in 1..MAX_CLAIMS {
@@ -513,9 +651,7 @@ mod tests {
         }
         assert_eq!(
             state.note_root(),
-            private_claims_proof_relation::claim_note_merkle_root(
-                &state.note_commitments
-            )
+            private_claims_proof_relation::claim_note_merkle_root(&state.note_commitments)
         );
     }
 
@@ -550,5 +686,36 @@ mod tests {
             state.register_note([99; 32], [100; 32]),
             Err(ProgramError::Custom(1))
         );
+    }
+
+    #[test]
+    fn append_rejects_invalid_ciphertext_without_mutating_state() {
+        let mut state = ClaimPool::new(
+            [1; 32], [2; 32], [3; 32], [4; 32], [5; 32], [6; 32], [7; 32], [8; 32], 10_000,
+        );
+        let original = state.clone();
+
+        assert_eq!(
+            state.append_funded_bid([9; 32], [10; 32], [u8::MAX; 64], [0; 64]),
+            Err(ProgramError::Custom(1))
+        );
+        assert_eq!(state, original);
+    }
+
+    #[test]
+    fn funding_finalization_rejects_malformed_aggregate_ciphertext() {
+        let mut state = ClaimPool::new(
+            [1; 32], [2; 32], [3; 32], [4; 32], [5; 32], [6; 32], [7; 32], [8; 32], 10_000,
+        );
+        state
+            .append_funded_bid([9; 32], [10; 32], [0; 64], [0; 64])
+            .unwrap();
+        state.aggregate_auditor_ciphertext_low = [u8::MAX; 64];
+
+        assert_eq!(
+            state.finalize_funding(),
+            Err(ProgramError::InvalidAccountData)
+        );
+        assert!(!state.funding_finalized);
     }
 }

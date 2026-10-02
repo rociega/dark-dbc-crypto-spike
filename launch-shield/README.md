@@ -111,9 +111,25 @@ To repeat the read-only Devnet fingerprint check, run
 `SOLANA_DEVNET_RPC_URL` when set, otherwise the public Devnet RPC, and compares
 the ProgramData address, upgrade authority, upgrade slot, executable length,
 and SHA-256 with the recorded snapshots. A fresh check on 2026-09-29 matched
-all fields. A mismatch exits nonzero. A match confirms only that the deployed
+all fields. A fresh check on 2026-09-30 also matched all fields. A mismatch
+exits nonzero. A match confirms only that the deployed
 bytes and authority match those snapshots; it does not establish source identity
 or settlement compatibility.
+
+The checker can also stage the verified Devnet ELF for an isolated ProgramTest
+loader-compatibility check:
+
+```sh
+python3 launch-shield/scripts/check_dbc_devnet.py \
+  --output-elf /tmp/meteora-dbc/dynamic_bonding_curve.so
+BPF_OUT_DIR=/tmp/meteora-dbc \
+  cargo test --locked --manifest-path launch-shield/runtime-tests/Cargo.toml \
+    --test dbc_runtime -- --include-ignored
+```
+
+This test verifies that ProgramTest loads the recorded DBC executable and
+reaches its Anchor instruction dispatcher. It does not execute DBC pool
+initialization or a swap; those still require valid DBC config and pool fixtures.
 
 ## Program interface
 
@@ -200,13 +216,41 @@ cargo run --manifest-path launch-shield/proof/Cargo.toml \
   -p launch-shield-proof-runner --features sp1-prover --bin launch-shield-vkey
 cargo run --manifest-path launch-shield/proof/Cargo.toml \
   -p launch-shield-proof-runner --features sp1-prover --bin launch-shield-prove
+env -u LD_AUDIT cargo run --manifest-path launch-shield/proof/Cargo.toml \
+  -p launch-shield-proof-runner --features sp1-network \
+  --bin launch-shield-prove-network -- --check-signer
+env -u LD_AUDIT cargo run --manifest-path launch-shield/proof/Cargo.toml \
+  -p launch-shield-proof-runner --features sp1-network --bin launch-shield-prove-network
 ```
 
 These use SP1 6.8.1 and circuit version 6.1.0. The prover reads amount and salt
 from stdin; do not put bid values or salts in command-line arguments or shell
-history. Proof generation, host-side verification, and the matching Solana
-verifier are separate release gates; a successful guest build alone does not
-establish on-chain compatibility.
+history. The network binary's `--check-signer` mode validates key format locally
+and does not contact SP1. Proof generation, host-side verification, and the
+matching Solana verifier are separate release gates; a successful guest build
+alone does not establish on-chain compatibility.
+
+The separate network binary uses SP1's private Reserved/TEE route and marks its
+stdin private; it has no public-prover fallback. It checks the expected guest
+verifier-key hash before proving, then verifies the returned proof locally and
+checks the 356-byte on-chain envelope and exact public values. Configure
+`NETWORK_PRIVATE_KEY` through Replit Secrets using a fresh, dedicated SP1
+Network signer. The SDK expects an EVM secp256k1 private key as hex (the
+`Private key` value from `cast wallet new`, optionally prefixed with `0x`), not
+a Solana keypair, address, or seed phrase. Never use the key previously shared
+in chat or a program upgrade-authority key. The network binary reads the same
+eight fields from stdin and does not submit Solana transactions. Use synthetic
+witnesses for qualification.
+
+The network runner submits the request and waits for it as separate steps. It
+prints the request ID immediately after successful submission, followed by
+fixed progress markers. Typed SP1 failures are reduced to allowlisted error
+codes and request IDs; raw SDK diagnostics are not forwarded. The local tests
+cover request-ID extraction and unknown-error redaction. The latest authorized
+synthetic run passed the local guest-key check and reached the SDK request call,
+but returned `SP1_ERROR_UNCLASSIFIED` with no request ID. No proof result was
+produced. This does not establish whether the service accepted the request; do
+not retry without fresh explicit authorization.
 
 ## Verification and remaining gates
 
@@ -215,14 +259,46 @@ Run native tests with a Rust toolchain on `PATH`:
 ```sh
 cargo test --manifest-path launch-shield/program/Cargo.toml
 cargo test --manifest-path launch-shield/proof/Cargo.toml -p launch-shield-proof-relation
+cargo test --manifest-path launch-shield/runtime-tests/Cargo.toml
 ```
 
 The on-chain crate's 28 unit tests and the shared proof-relation crate's 8 tests
-pass. Host-side tests also cover cancellation deadline/settlement guards,
+pass. The separate Solana ProgramTest 2.2.1 harness contains 4 runtime tests:
+config and auction initialization, upgrade-authority rejection, transaction
+rollback when auction initialization rejects its DBC account owner, and an
+opt-in test that executes the verified SBF artifact through the upgradeable
+loader. The harness is isolated from the SBF crate's lockfile and target
+directory; sharing the build cache produced incompatible Solana crate type
+identities.
+
+By default, the runtime-test command runs the first 3 cases using a native
+builtin processor. To run the existing cases against SBF through the legacy BPF
+loader and include the upgradeable-loader case, use:
+
+```sh
+BPF_OUT_DIR="$PWD/launch-shield/program/target/deploy" \
+  cargo test --locked --manifest-path launch-shield/runtime-tests/Cargo.toml \
+    --test runtime -- --include-ignored
+```
+
+The upgradeable-loader case checks the artifact's recorded SHA-256, creates
+Program and ProgramData accounts with the test signer as upgrade authority, and
+executes config and auction initialization through that loader. The 3 existing
+cases use the legacy BPF loader when `BPF_OUT_DIR` is set. Those legacy-loader
+initialization paths used about 13,095 compute units for config initialization
+and 17,957 for auction initialization under the test runtime's 400,000-unit
+budget.
+
+The runtime harness does not execute the DBC program or a settlement swap; its
+auction-initialization case checks that the DBC config fixture is owned by the
+DBC program. Launch Shield validates the settlement's top-level DBC instruction
+sequence through the Instructions sysvar; it does not invoke DBC as a CPI.
+Host-side tests also cover cancellation deadline/settlement guards,
 claim eligibility, and cancelled-refund eligibility through the same pure
-validation helpers used by the instruction handlers; they do not simulate
-token CPIs or validator rollback. Settlement's same-pool swap guard scans only
-the transaction's encoded top-level instruction count, rather than probing all
+validation helpers used by the instruction handlers. The runtime tests cover
+atomic rollback for auction initialization, but not token CPIs or settlement
+and claim rollback. Settlement's same-pool swap guard scans only the
+transaction's encoded top-level instruction count, rather than probing all
 65,536 possible indices. Tests exercise serialized Instructions-sysvar layouts
 for the valid five-instruction settlement sequence and for duplicate same-pool
 swap rejection. They also bind the initialization instruction to its expected
@@ -231,8 +307,49 @@ and check that pro-rata rounding cannot allocate more than the output total.
 The SP1 6.8.1 guest ELF and local `sp1-executor` runner compile with the matching
 toolchain. The runner was exercised using synthetic data: a valid bid produced
 the 200-byte public statement, while a mutated amount exited nonzero. This does
-not generate or verify a Groth16 proof. The full `sp1-prover` build remains
-blocked by the dependency firewall described below.
+not generate or verify a Groth16 proof. The separate `sp1-network` binary passed
+locked `cargo check` and `cargo build` with the pinned guest toolchain, and its
+empty-input smoke check rejected input before creating a prover client. The
+local `--check-signer` format check passed without contacting SP1; this confirms
+syntax only, not SP1 authorization. An earlier synthetic private proving
+invocation was interrupted before a sanitized result was collected, so whether
+SP1 accepted it is unknown. Another attempt exited nonzero; its ad-hoc
+sanitizer did not preserve a request ID or recognize an error category, so that
+outcome is also unknown. A later synthetic run stopped at the local guest-key
+check because the generated hash
+`0x0087f6df27e09f077f54cfab0ef64d46bf1311df3dd721869ca7c13fc628c754` differed
+from the runner's old pin
+`0x00d3a9ac7112043d787957d33cb0ae9b7e2aacd3097c82770e31a8d9628d9f8f`. The
+local `launch-shield-vkey` helper reproduced the generated hash twice, so the
+off-chain runner pin was updated; no on-chain config or deployment changed.
+The subsequent authorized synthetic run reached the private submit step but
+returned `SP1_ERROR_UNCLASSIFIED` without a request ID or proof output. Whether
+the service accepted that request is unknown, and this attempt must not be
+retried without fresh explicit authorization. Remote proof generation,
+returned proof encoding, and host-side verification remain unverified. No proof
+was submitted to Solana and no program initialization transaction was sent. The
+separate experimental program deployment is recorded below.
+
+On 2026-09-30, rebuilding the guest with the restored SP1 `succinct` toolchain
+produced a verifier-key hash different from the release pin. The Reserved
+client and local light helper both derived
+`0x00c251c2fcd8917e273d863fa9b2d15495d1992f4a5289c905b8be6fe9ddaca3`,
+which differs from the pinned
+`0x0087f6df27e09f077f54cfab0ef64d46bf1311df3dd721869ca7c13fc628c754`. The
+network runner stopped before the private submit stage, so this authorized
+synthetic request was not submitted. Do not change the pin from this rebuild
+alone; recover the release-matching guest toolchain or review a coordinated
+verifier-key change before proving or deploying.
+
+The official `succinct-1.94.0-64bit` toolchain selected by `cargo-prove` v6.7.0
+was also tested; it derived `0x00df92ceaccde0ed7c057f1a3634516b1aa891539a951781c6a95141a87f8295`,
+not the release pin. The older pre-v2 `succinct-1.96.0-64bit` archive does not
+contain the RISC-V target needed by this guest. The exact toolchain used to
+produce the release pin remains unidentified, so no proof request has been
+submitted.
+
+The optional CPU
+`sp1-prover` build remains blocked by the dependency firewall described below.
 
 A prior SBF release build completed for `sbfv1` with Solana CLI 1.18.26 and
 platform-tools v1.52. Its stripped `launch_shield_program.so` was 338,704
@@ -244,21 +361,43 @@ A current-source SBF release build completed with Agave CLI 4.3.0 and
 platform-tools v1.57. The stripped `launch_shield_program.so` is 321,064
 bytes (SHA-256
 `ab0e74f0e074f5c8c47b9898e0786a8fe091ad10497343f385dad3ce8bb01115`).
+`launch-shield/scripts/prepare_sbf_release.sh` recreates that output from the
+cached unstripped SBF and refuses to write it unless the size and SHA-256 match.
+LLVM 19.1.7's `llvm-strip --strip-all` reproduced the recorded artifact exactly;
+the generic system `strip` does not recognize this SBPF file.
 Agave's `--patch-binaries-for-nix true` path panics in this Replit image
 because its generated Nix dependency bundle lacks `nix-support/dynamic-linker`;
 the build passed with `--patch-binaries-for-nix false`. This validates SBF
 compilation only.
 
+### Experimental Devnet deployment (2026-09-30)
+
+The cached SBF artifact was deployed as an explicitly experimental,
+upgradeable-loader program:
+
+| Program ID | ProgramData address | Upgrade authority | Deployment slot | ELF size | SHA-256 |
+|---|---|---|---:|---:|---|
+| `EffXTARKTMNvZrm9twMcaanYMw4FTijsSnvTU85C3yJz` | `J1hShJigprAh9rmVzqBm1iAChVZaXX3nYDR8ubkw7PcZ` | `EyrEcUXb1tJaUTuZxg59VeqZJ2TynKECeFzf1eZFwDbc` | 505984615 | 321,064 bytes | `ab0e74f0e074f5c8c47b9898e0786a8fe091ad10497343f385dad3ce8bb01115` |
+
+The finalized on-chain ELF was dumped and matched the cached artifact's size
+and SHA-256. The deployer wallet is the upgrade authority. Deployment did not
+initialize the program or submit proofs, auction instructions, token CPIs, or
+DBC settlement transactions. This confirms the uploaded artifact and loader
+metadata only; it is not a production release or an instruction-runtime test.
+
 The Agave 4.3.0 local validator cannot start in this environment: its `io_uring`
 probe returns `Operation not permitted`, then startup panics because
-`io_uring_supported()` is false. The program has not been loaded into a
-validator here. Runtime behavior and Devnet settlement remain unverified. No
-DBC transaction simulation, deployed-version source match, verifier compute
-measurement, or production deployment has been completed.
+`io_uring_supported()` is false. The hash-verified SBF artifact has executed in
+ProgramTest and is now deployed under the upgradeable loader on Devnet, but its
+instructions have not been invoked there or under the upgradeable loader in a
+local validator. Token CPIs, real DBC settlement, and instruction runtime remain
+unverified. No DBC transaction simulation, deployed-version source match,
+verifier compute measurement, or production deployment has been completed.
 
 The first usable release still needs a vkey and proof generated for the actual
-guest; a pinned DBC deployment/IDL; transaction-size/compute validation; and
-validator tests for escrow, settlement rollback, cancellation, and claims.
+guest; a pinned DBC deployment/IDL; settlement transaction-size/compute
+validation; and validator tests for escrow, settlement rollback, cancellation,
+and claims.
 The current MVP only supports classic SPL quote tokens, reveals bid amounts
 after close, and has an eight-bid cap.
 

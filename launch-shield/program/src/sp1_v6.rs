@@ -84,7 +84,11 @@ pub(crate) fn verify_proof(
     verify_sp1_v6_proof(proof, public_values, vkey_hash)
 }
 
-fn verify_sp1_v6_proof(proof: &[u8], public_values: &[u8], vkey_hash: &str) -> Result<(), ()> {
+pub(crate) fn verify_sp1_v6_proof(
+    proof: &[u8],
+    public_values: &[u8],
+    vkey_hash: &str,
+) -> Result<(), ()> {
     if proof.len() != SP1_PROOF_LEN {
         return Err(());
     }

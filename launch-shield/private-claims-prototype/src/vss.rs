@@ -27,8 +27,8 @@ impl DealerPolynomial {
 
     fn commitment(&self) -> PolynomialCommitment {
         PolynomialCommitment {
-            constant: G * self.constant,
-            slope: G * self.slope,
+            constant: *G * self.constant,
+            slope: *G * self.slope,
         }
     }
 }
@@ -61,7 +61,7 @@ fn verify_share(
     share: Scalar,
 ) -> bool {
     recipient_id != 0
-        && G * share
+        && *G * share
             == commitment.constant + commitment.slope * Scalar::from(recipient_id)
 }
 
@@ -89,7 +89,7 @@ mod tests {
         let expected_secret =
             Scalar::from(11u64) + Scalar::from(22u64) + Scalar::from(33u64);
 
-        assert_eq!(joint_commitment.constant, G * expected_secret);
+        assert_eq!(joint_commitment.constant, *G * expected_secret);
         assert_ne!(joint_commitment.constant, RistrettoPoint::identity());
 
         for recipient_id in 1..=3 {
@@ -124,7 +124,7 @@ mod tests {
     fn altered_public_commitment_is_detected_by_share_verification() {
         let dealer = DealerPolynomial::new(Scalar::from(19u64), Scalar::from(23u64));
         let mut commitment = dealer.commitment();
-        commitment.constant += G;
+        commitment.constant += *G;
 
         assert!(!verify_share(&commitment, 2, dealer.share_at(2)));
     }

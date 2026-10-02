@@ -7,12 +7,14 @@ source revision produced the executable or establish settlement compatibility.
 
 from __future__ import annotations
 
+import argparse
 import base64
 import hashlib
 import json
 import os
 import struct
 import sys
+from pathlib import Path
 from urllib.request import Request, urlopen
 
 
@@ -90,6 +92,24 @@ def matches_devnet_snapshot(
     )
 
 
+def write_verified_executable(
+    output_path: str | Path, executable: bytes, expected_sha256: str
+) -> None:
+    """Write an ELF only when it matches the expected digest; never overwrite a different file."""
+    digest = hashlib.sha256(executable).hexdigest()
+    if digest != expected_sha256:
+        raise ValueError("refusing to write an executable with an unexpected SHA-256")
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("xb") as output_file:
+            output_file.write(executable)
+    except FileExistsError:
+        if path.read_bytes() != executable:
+            raise ValueError(f"refusing to overwrite a different file: {path}") from None
+
+
 def rpc_call(endpoint: str, method: str, params: list[object]) -> dict:
     body = json.dumps(
         {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
@@ -137,7 +157,18 @@ def get_account(endpoint: str, address: str) -> tuple[dict, bytes]:
     return info, raw_data
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Read-only fingerprint check for the Meteora DBC Devnet executable."
+    )
+    parser.add_argument(
+        "--output-elf",
+        type=Path,
+        metavar="PATH",
+        help="optionally save the hash-verified DBC ELF for local runtime testing",
+    )
+    args = parser.parse_args(argv)
+
     endpoint = os.environ.get("SOLANA_DEVNET_RPC_URL", DEFAULT_RPC_URL)
     try:
         program_info, program_data = get_account(endpoint, PROGRAM_ID)
@@ -183,6 +214,15 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    if args.output_elf is not None:
+        try:
+            write_verified_executable(
+                args.output_elf, executable, DEVNET_SNAPSHOT_SHA256
+            )
+        except (OSError, ValueError) as error:
+            print(f"Could not save verified DBC ELF: {error}", file=sys.stderr)
+            return 2
+        print(f"Saved verified DBC ELF: {args.output_elf}")
     print(
         "Snapshot match only: this does not prove source identity or settlement "
         "compatibility."

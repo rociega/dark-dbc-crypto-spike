@@ -1,5 +1,8 @@
+import hashlib
 import struct
+import tempfile
 import unittest
+from pathlib import Path
 
 from check_dbc_devnet import (
     DEVNET_SNAPSHOT_EXECUTABLE_BYTES,
@@ -11,6 +14,7 @@ from check_dbc_devnet import (
     matches_devnet_snapshot,
     parse_program_data,
     program_data_address,
+    write_verified_executable,
 )
 
 
@@ -63,6 +67,30 @@ class LoaderAccountParsingTests(unittest.TestCase):
                 *snapshot[:2], "11111111111111111111111111111111", *snapshot[3:]
             )
         )
+
+
+class VerifiedExecutableExportTests(unittest.TestCase):
+    def test_export_writes_only_the_expected_digest_and_refuses_overwrite(self):
+        executable = b"\x7fELF\x01test-image"
+        digest = hashlib.sha256(executable).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "nested" / "dynamic_bonding_curve.so"
+            write_verified_executable(output, executable, digest)
+            self.assertEqual(output.read_bytes(), executable)
+
+            with self.assertRaisesRegex(ValueError, "unexpected SHA-256"):
+                write_verified_executable(output, b"different", digest)
+            with self.assertRaisesRegex(ValueError, "refusing to overwrite"):
+                write_verified_executable(output, b"different", hashlib.sha256(b"different").hexdigest())
+
+    def test_export_is_idempotent_for_the_same_verified_elf(self):
+        executable = b"\x7fELF\x02same-image"
+        digest = hashlib.sha256(executable).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "dynamic_bonding_curve.so"
+            write_verified_executable(output, executable, digest)
+            write_verified_executable(output, executable, digest)
+            self.assertEqual(output.read_bytes(), executable)
 
 
 if __name__ == "__main__":

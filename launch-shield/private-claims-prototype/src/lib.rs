@@ -9,11 +9,11 @@ use curve25519_dalek::scalar::Scalar;
 use solana_zk_sdk::encryption::{
     elgamal::{ElGamalPubkey, ElGamalSecretKey},
     pedersen::{G, H},
+    pod::elgamal::PodElGamalPubkey,
 };
-use solana_zk_sdk_pod::encryption::elgamal::PodElGamalPubkey;
 
-mod funding;
 mod claim;
+mod funding;
 mod vss;
 
 const INDICES: [u64; 3] = [1, 2, 3];
@@ -35,16 +35,11 @@ fn centrally_simulated_masked_inversion_matches_sdk_key_and_decryption() {
     let mask = Scalar::from(456_789_123u64);
     let mask_slope = Scalar::from(321_987_654u64);
 
-    let secret_shares = INDICES
-        .map(|index| evaluate_degree_one(secret, secret_slope, index));
+    let secret_shares = INDICES.map(|index| evaluate_degree_one(secret, secret_slope, index));
     let mask_shares = INDICES.map(|index| evaluate_degree_one(mask, mask_slope, index));
 
     // For shares at x=1,2,3, these interpolate a degree-two product at x=0.
-    let interpolation_weights = [
-        Scalar::from(3u64),
-        -Scalar::from(3u64),
-        Scalar::ONE,
-    ];
+    let interpolation_weights = [Scalar::from(3u64), -Scalar::from(3u64), Scalar::ONE];
 
     // A centralized simulation of degree reduction: each dealer reshapes its
     // weighted local product as a degree-one polynomial, then each recipient
@@ -59,15 +54,13 @@ fn centrally_simulated_masked_inversion_matches_sdk_key_and_decryption() {
             .map(|dealer| {
                 let weighted_product =
                     interpolation_weights[dealer] * secret_shares[dealer] * mask_shares[dealer];
-                weighted_product
-                    + degree_reduction_slopes[dealer] * Scalar::from(recipient_index)
+                weighted_product + degree_reduction_slopes[dealer] * Scalar::from(recipient_index)
             })
             .sum::<Scalar>()
     });
 
     // Open z = s*r from the first two evaluations of its degree-one sharing.
-    let masked_product =
-        Scalar::from(2u64) * masked_product_shares[0] - masked_product_shares[1];
+    let masked_product = Scalar::from(2u64) * masked_product_shares[0] - masked_product_shares[1];
     assert_eq!(masked_product, secret * mask);
     let inverse = inverse_of_nonzero(masked_product).expect("nonzero mask product");
 
@@ -93,7 +86,7 @@ fn centrally_simulated_masked_inversion_matches_sdk_key_and_decryption() {
     let partial_2 = handle * secret_shares[1];
     let combined = partial_1 * Scalar::from(2u64) - partial_2;
     let plaintext_point = ciphertext.commitment.get_point() - combined;
-    assert_eq!(plaintext_point, G * Scalar::from(987_654u64));
+    assert_eq!(plaintext_point, *G * Scalar::from(987_654u64));
 }
 
 #[test]
@@ -111,16 +104,19 @@ fn two_share_interpolation_does_not_recover_a_degree_two_product() {
     let two_share_guess = Scalar::from(2u64) * local_products[0] - local_products[1];
     assert_ne!(two_share_guess, secret * mask);
 
-    let three_share_product =
-        Scalar::from(3u64) * local_products[0] - Scalar::from(3u64) * local_products[1]
-            + local_products[2];
+    let three_share_product = Scalar::from(3u64) * local_products[0]
+        - Scalar::from(3u64) * local_products[1]
+        + local_products[2];
     assert_eq!(three_share_product, secret * mask);
 }
 
 #[test]
 fn zero_masked_product_is_rejected_before_inversion() {
     assert_eq!(inverse_of_nonzero(Scalar::ZERO), None);
-    assert_eq!(inverse_of_nonzero(Scalar::from(7u64)), Some(Scalar::from(7u64).invert()));
+    assert_eq!(
+        inverse_of_nonzero(Scalar::from(7u64)),
+        Some(Scalar::from(7u64).invert())
+    );
 }
 
 #[test]
@@ -137,4 +133,107 @@ fn interpolating_public_keys_of_shares_does_not_match_the_sdk_key() {
     let sdk_key = ElGamalPubkey::new(&ElGamalSecretKey::from(secret));
 
     assert_ne!(naive_interpolation, *sdk_key.get_point());
+}
+
+#[test]
+fn three_of_three_transforms_match_the_pinned_sdk_key_and_ciphertexts() {
+    use private_claims_proof_relation::threshold::{
+        aggregate_decryption_context_hash, apply_decryption_factor, apply_inverse_key_factor,
+        key_transform_context_hash, prove_dleq_with_nonce, solana_pedersen_h, verify_dleq,
+        AggregateComponent,
+    };
+
+    const PROGRAM_ID: [u8; 32] = [11; 32];
+    const FUNDING_MINT: [u8; 32] = [12; 32];
+    const POOL: [u8; 32] = [13; 32];
+    const AGGREGATE_DIGEST: [u8; 32] = [14; 32];
+    const KEY_EPOCH: [u8; 32] = [15; 32];
+    const TRUSTEE_IDS: [[u8; 32]; 3] = [[16; 32], [17; 32], [18; 32]];
+
+    let shares = [
+        Scalar::from(31u64),
+        Scalar::from(37u64),
+        Scalar::from(41u64),
+    ];
+    let nonces = [
+        Scalar::from(43u64),
+        Scalar::from(47u64),
+        Scalar::from(53u64),
+    ];
+    let decryption_nonces = [
+        Scalar::from(59u64),
+        Scalar::from(61u64),
+        Scalar::from(67u64),
+    ];
+    let mut public_key = solana_pedersen_h();
+
+    for index in 0..shares.len() {
+        let trustee_index = u8::try_from(index + 1).unwrap();
+        let context = key_transform_context_hash(
+            &PROGRAM_ID,
+            &FUNDING_MINT,
+            &KEY_EPOCH,
+            &TRUSTEE_IDS[index],
+            trustee_index,
+        )
+        .unwrap();
+        let previous_key = public_key;
+        public_key = apply_inverse_key_factor(&public_key, &shares[index]).unwrap();
+        let (statement, proof) = prove_dleq_with_nonce(
+            &shares[index],
+            &nonces[index],
+            context,
+            public_key,
+            previous_key,
+        )
+        .unwrap();
+        assert!(verify_dleq(&statement, &proof));
+    }
+
+    let total_secret = shares.iter().copied().product::<Scalar>();
+    let sdk_key = ElGamalPubkey::new(&ElGamalSecretKey::from(total_secret));
+    assert_eq!(public_key, sdk_key.get_point().compress().to_bytes());
+    assert_eq!(*H, *sdk_key.get_point() * total_secret);
+
+    let ciphertexts = [sdk_key.encrypt_u64(987_654), sdk_key.encrypt_u64(123_456)];
+    let mut aggregate_commitment = curve25519_dalek::ristretto::RistrettoPoint::default();
+    let mut aggregate_handle = curve25519_dalek::ristretto::RistrettoPoint::default();
+    for ciphertext in &ciphertexts {
+        aggregate_commitment += ciphertext.commitment.get_point();
+        aggregate_handle += ciphertext.handle.get_point();
+    }
+
+    let mut handle = aggregate_handle.compress().to_bytes();
+    for index in 0..shares.len() {
+        let trustee_index = u8::try_from(index + 1).unwrap();
+        let context = aggregate_decryption_context_hash(
+            &PROGRAM_ID,
+            &POOL,
+            &AGGREGATE_DIGEST,
+            &KEY_EPOCH,
+            &TRUSTEE_IDS[index],
+            trustee_index,
+            AggregateComponent::Low,
+        )
+        .unwrap();
+        let input = handle;
+        handle = apply_decryption_factor(&input, &shares[index]).unwrap();
+        let (statement, proof) = prove_dleq_with_nonce(
+            &shares[index],
+            &decryption_nonces[index],
+            context,
+            input,
+            handle,
+        )
+        .unwrap();
+        assert!(verify_dleq(&statement, &proof));
+    }
+
+    let decrypted_opening = curve25519_dalek::ristretto::CompressedRistretto(handle)
+        .decompress()
+        .unwrap();
+    assert_eq!(
+        aggregate_commitment - decrypted_opening,
+        *G * Scalar::from(1_111_110u64)
+    );
 }
