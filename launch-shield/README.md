@@ -51,7 +51,7 @@ The instruction sequence is:
 DBC initialize_virtual_pool_with_spl_token (top-level)
 Associated Token Account create for the program's base-token vault
 Launch Shield prepare_settlement (does not list the DBC pool account)
-DBC swap2 ExactIn (top-level; Instructions sysvar as one remaining account)
+DBC swap2 ExactIn (top-level; 15 account metas, no Instructions sysvar)
 Launch Shield finalize_settlement
 ```
 
@@ -64,14 +64,16 @@ checks for quote-mint token badges and rejects deprecated rate-limiter and
 Meteora DAMM migration settings. The repository does not include a DBC 0.2.1
 release IDL, so this source review is not a regenerated 0.2.1 IDL binding.
 
-The parser requires the no-referral sentinel, Anchor event-CPI accounts, and
-the single Instructions sysvar remaining account. That is 15 account metas
-through the DBC program account (including the optional-referral sentinel),
-followed by the Instructions sysvar as meta 16. This source review does not
-prove either deployed program matches that source. Before deployment, pin and
-compare the target cluster's deployed DBC build and regenerate the instruction
-bindings from that matching source. Use a DBC config accepted by the deployed
-initializer; an incompatible config can make settlement fail atomically.
+The observed Devnet SPL initializer has 16 account metas through the DBC program
+account and does not include the Instructions sysvar. The observed `swap2` has
+15 account metas, including the no-referral sentinel and Anchor event-CPI
+accounts, and also does not include the Instructions sysvar. Launch Shield
+separately receives that sysvar in its preparation and finalization instructions
+to validate the surrounding transaction. These captured layouts do not prove
+that the deployed DBC executable matches the reviewed source. Before deployment,
+pin and compare the target cluster's deployed DBC build and regenerate the
+instruction bindings from that matching source. Use a DBC config accepted by the
+deployed initializer; an incompatible config can make settlement fail atomically.
 
 Auction creation currently checks that the DBC config account is owned by the
 DBC program, but it does not decode that config or prevalidate its quote mint
