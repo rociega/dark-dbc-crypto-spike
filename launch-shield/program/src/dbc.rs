@@ -170,6 +170,7 @@ pub fn validate_finalize_predecessor(
         || swap.input != *input
         || swap.output != *output
         || swap.payer != *creator
+        || swap.has_referral
     {
         return Err(ShieldError::InvalidDbcInstruction.into());
     }
@@ -560,7 +561,7 @@ mod tests {
         let creator = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
         let quote_mint = Pubkey::new_unique();
-        let mut ix = init_spl_fixture(config, creator, base_mint, quote_mint);
+        let ix = init_spl_fixture(config, creator, base_mint, quote_mint);
 
         verify_init_instruction(&ix, &config, &quote_mint, &base_mint, &creator).unwrap();
 
@@ -803,18 +804,7 @@ mod tests {
         let dbc_base_vault = Pubkey::new_unique();
         let dbc_quote_vault = Pubkey::new_unique();
 
-        let init_ix = Instruction {
-            program_id: DBC_PROGRAM_ID,
-            accounts: vec![
-                AccountMeta::new_readonly(config, false),
-                AccountMeta::new_readonly(Pubkey::new_unique(), false),
-                AccountMeta::new_readonly(creator, false),
-                AccountMeta::new_readonly(base_mint, false),
-                AccountMeta::new_readonly(quote_mint, false),
-                AccountMeta::new_readonly(pool, false),
-            ],
-            data: discriminator(INIT_SPL_NAME).to_vec(),
-        };
+        let init_ix = init_spl_fixture(config, creator, base_mint, quote_mint);
         let create_vault_ix = Instruction {
             program_id: ASSOCIATED_TOKEN_PROGRAM_ID,
             accounts: vec![
