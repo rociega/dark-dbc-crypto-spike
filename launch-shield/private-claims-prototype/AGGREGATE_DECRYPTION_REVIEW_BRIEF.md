@@ -18,8 +18,13 @@ relation-level primitives as a production implementation.
 - `AGGREGATE_DECRYPTION_PROOF_READY` remains `false`. `Initialize`, `FundBid`,
   and `Settle` are fail-closed.
 - Pool state accumulates low/high auditor ciphertexts after successful CPIs,
-  but does not retain individual ciphertexts or an authenticated trustee
-  roster, key epoch, or decryption transcript.
+  retains the accepted-bid commitments and transfer-context hashes, and stores
+  the registered trustee roster, key epoch, and verification shares. It does
+  not retain individual ciphertexts or a per-trustee decryption transcript.
+- Settlement now consumes a global PDA keyed by funding mint and the
+  order-independent trustee-operator roster. It records one release across
+  pools and key epochs for that mint and roster. This is a conservative guard,
+  not a disjoint-cohort proof or a cross-program global ledger.
 - The no_std relation verifies ordered 3-of-3 inverse-key and aggregate-handle
   transforms with DLEQ proofs. It does not provide key ceremony, trustee
   enrollment or custody, authenticated transport, production nonce generation,

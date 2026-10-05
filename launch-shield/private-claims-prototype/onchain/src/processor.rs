@@ -38,12 +38,16 @@ use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation
 use std::convert::TryInto;
 
 const AUCTION_ID_DOMAIN: &[u8] = b"private-claims:auction-id:test-v1";
+const AGGREGATE_RELEASE_ROSTER_DOMAIN: &[u8] =
+    b"launch-shield:private-claims:aggregate-release-roster:v1";
 const INVALID_PROOF: ProgramError = ProgramError::Custom(2);
 const INVALID_CONFIGURATION: ProgramError = ProgramError::Custom(3);
 const INVALID_PUBLIC_VALUES: ProgramError = ProgramError::Custom(4);
 const INVALID_TOKEN_ACCOUNTS: ProgramError = ProgramError::Custom(5);
 const INVALID_CONFIDENTIAL_TRANSFER: ProgramError = ProgramError::Custom(6);
 const INVALID_FUNDING_AUTHORITY: ProgramError = ProgramError::Custom(7);
+const INVALID_AGGREGATE_RELEASE: ProgramError = ProgramError::Custom(8);
+const AGGREGATE_RELEASE_DATA_LEN: usize = 1 + 5 * 32;
 // Keep all pool funding and settlement disabled until proof verification,
 // runtime CPI behavior, trustee authorization, and cross-pool release controls
 // have been validated.
@@ -70,6 +74,139 @@ fn require_trustee_operator_identity(
     if operator_key.to_bytes() != *trustee_id {
         return Err(INVALID_CONFIGURATION);
     }
+    Ok(())
+}
+
+fn aggregate_release_roster_hash(trustee_ids: &[[u8; 32]; 3]) -> [u8; 32] {
+    let mut sorted_ids = *trustee_ids;
+    sorted_ids.sort_unstable();
+    hashv(&[
+        AGGREGATE_RELEASE_ROSTER_DOMAIN,
+        &sorted_ids[0],
+        &sorted_ids[1],
+        &sorted_ids[2],
+    ])
+    .to_bytes()
+}
+
+fn aggregate_release_registry_address(
+    program_id: &Pubkey,
+    funding_mint: &[u8; 32],
+    trustee_ids: &[[u8; 32]; 3],
+) -> (Pubkey, u8, [u8; 32]) {
+    let roster_hash = aggregate_release_roster_hash(trustee_ids);
+    let (address, bump) = Pubkey::find_program_address(
+        &[b"aggregate-release", funding_mint, &roster_hash],
+        program_id,
+    );
+    (address, bump, roster_hash)
+}
+
+fn aggregate_release_record(
+    funding_mint: &[u8; 32],
+    roster_hash: &[u8; 32],
+    pool_account: &[u8; 32],
+    aggregate_digest: &[u8; 32],
+    key_epoch: &[u8; 32],
+) -> [u8; AGGREGATE_RELEASE_DATA_LEN] {
+    let mut record = [0; AGGREGATE_RELEASE_DATA_LEN];
+    record[0] = 1;
+    record[1..33].copy_from_slice(funding_mint);
+    record[33..65].copy_from_slice(roster_hash);
+    record[65..97].copy_from_slice(pool_account);
+    record[97..129].copy_from_slice(aggregate_digest);
+    record[129..161].copy_from_slice(key_epoch);
+    record
+}
+
+fn consume_aggregate_release_guard<'a>(
+    program_id: &Pubkey,
+    authority: &AccountInfo<'a>,
+    registry_account: &AccountInfo<'a>,
+    system_program_account: &AccountInfo<'a>,
+    funding_mint: &[u8; 32],
+    trustee_ids: &[[u8; 32]; 3],
+    pool_account: &[u8; 32],
+    aggregate_digest: &[u8; 32],
+    key_epoch: &[u8; 32],
+) -> Result<(), ProgramError> {
+    if !authority.is_signer
+        || !authority.is_writable
+        || !registry_account.is_writable
+        || system_program_account.key != &system_program::id()
+        || !system_program_account.executable
+    {
+        return Err(INVALID_AGGREGATE_RELEASE);
+    }
+
+    let (expected_registry, bump, roster_hash) =
+        aggregate_release_registry_address(program_id, funding_mint, trustee_ids);
+    if registry_account.key != &expected_registry
+        || registry_account.owner != &system_program::id()
+        || !registry_account.data_is_empty()
+    {
+        return Err(INVALID_AGGREGATE_RELEASE);
+    }
+
+    let rent_minimum = Rent::get()?.minimum_balance(AGGREGATE_RELEASE_DATA_LEN);
+    let signer_seeds: &[&[u8]] = &[b"aggregate-release", funding_mint, &roster_hash, &[bump]];
+    if registry_account.lamports() == 0 {
+        let create = system_instruction::create_account(
+            authority.key,
+            registry_account.key,
+            rent_minimum,
+            AGGREGATE_RELEASE_DATA_LEN as u64,
+            program_id,
+        );
+        invoke_signed(
+            &create,
+            &[
+                authority.clone(),
+                registry_account.clone(),
+                system_program_account.clone(),
+            ],
+            &[signer_seeds],
+        )?;
+    } else {
+        if registry_account.lamports() < rent_minimum {
+            let top_up = system_instruction::transfer(
+                authority.key,
+                registry_account.key,
+                rent_minimum - registry_account.lamports(),
+            );
+            invoke(
+                &top_up,
+                &[
+                    authority.clone(),
+                    registry_account.clone(),
+                    system_program_account.clone(),
+                ],
+            )?;
+        }
+        let allocate =
+            system_instruction::allocate(registry_account.key, AGGREGATE_RELEASE_DATA_LEN as u64);
+        invoke_signed(
+            &allocate,
+            &[registry_account.clone(), system_program_account.clone()],
+            &[signer_seeds],
+        )?;
+        let assign = system_instruction::assign(registry_account.key, program_id);
+        invoke_signed(
+            &assign,
+            &[registry_account.clone(), system_program_account.clone()],
+            &[signer_seeds],
+        )?;
+    }
+
+    registry_account
+        .try_borrow_mut_data()?
+        .copy_from_slice(&aggregate_release_record(
+            funding_mint,
+            &roster_hash,
+            pool_account,
+            aggregate_digest,
+            key_epoch,
+        ));
     Ok(())
 }
 
@@ -701,7 +838,7 @@ fn settle(
     if !AGGREGATE_DECRYPTION_PROOF_READY {
         return Err(INVALID_CONFIGURATION);
     }
-    if accounts.len() != 22
+    if accounts.len() != 24
         || proof.len() != crate::instruction::SP1_PROOF_LEN
         || public_values.len() != AGGREGATE_DECRYPTION_PUBLIC_VALUES_LEN
     {
@@ -727,17 +864,21 @@ fn settle(
     let dbc_pool_authority = next_account_info(account_info_iter)?;
     let dbc_event_authority = next_account_info(account_info_iter)?;
     let instructions_sysvar = next_account_info(account_info_iter)?;
+    let aggregate_release_registry = next_account_info(account_info_iter)?;
+    let system_program_account = next_account_info(account_info_iter)?;
 
     if !authority.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
     if !pool_account.is_writable
+        || !authority.is_writable
         || !confidential_vault.is_writable
         || !confidential_vault_authority.is_writable
         || !vault.is_writable
         || !dbc_pool.is_writable
         || !dbc_base_vault.is_writable
         || !dbc_quote_vault.is_writable
+        || !aggregate_release_registry.is_writable
         || equality_context.is_writable
         || range_context.is_writable
     {
@@ -750,6 +891,8 @@ fn settle(
         || !token_program.executable
         || dbc_program.key != &dbc::DBC_PROGRAM_ID
         || !dbc_program.executable
+        || system_program_account.key != &system_program::id()
+        || !system_program_account.executable
         || dbc_event_authority.key != &dbc::event_authority()
         || instructions_sysvar.key != &solana_program::sysvar::instructions::id()
         || funding_mint.owner != &spl_token_2022::id()
@@ -889,6 +1032,18 @@ fn settle(
     drop(confidential_vault_data);
     drop(funding_mint_state);
     drop(funding_mint_data);
+
+    consume_aggregate_release_guard(
+        program_id,
+        authority,
+        aggregate_release_registry,
+        system_program_account,
+        &state.funding_mint,
+        &state.trustee_ids,
+        &pool_account.key.to_bytes(),
+        &aggregate_statement.finalized_aggregate_digest(),
+        &state.key_epoch,
+    )?;
 
     let empty_decryptable_balance_bytes = [0u8; DECRYPTABLE_BALANCE_LEN];
     let empty_decryptable_balance =
@@ -1272,8 +1427,10 @@ fn guest_vkey_hash() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        claim_public_values_match, derive_auction_id, redemption_public_values_match,
-        require_trustee_operator_identity, safe_vault,
+        aggregate_release_record, aggregate_release_registry_address,
+        aggregate_release_roster_hash, claim_public_values_match, derive_auction_id,
+        redemption_public_values_match, require_trustee_operator_identity, safe_vault,
+        AGGREGATE_RELEASE_DATA_LEN,
     };
     use crate::state::ClaimPool;
     use solana_program::{program_option::COption, pubkey::Pubkey};
@@ -1308,6 +1465,38 @@ mod tests {
             auction_id,
             derive_auction_id(&program_id, &Pubkey::new_from_array([12; 32]), &nonce)
         );
+    }
+
+    #[test]
+    fn aggregate_release_registry_is_order_independent_and_mint_scoped() {
+        let program_id = Pubkey::new_from_array([9; 32]);
+        let mint = [20; 32];
+        let ids = [[31; 32], [32; 32], [33; 32]];
+        let reordered = [ids[2], ids[0], ids[1]];
+
+        assert_eq!(
+            aggregate_release_roster_hash(&ids),
+            aggregate_release_roster_hash(&reordered)
+        );
+        let (registry, _, _) = aggregate_release_registry_address(&program_id, &mint, &ids);
+        let (same_registry, _, _) =
+            aggregate_release_registry_address(&program_id, &mint, &reordered);
+        let (other_mint_registry, _, _) =
+            aggregate_release_registry_address(&program_id, &[21; 32], &ids);
+        assert_eq!(registry, same_registry);
+        assert_ne!(registry, other_mint_registry);
+    }
+
+    #[test]
+    fn aggregate_release_record_binds_pool_digest_and_epoch() {
+        let record = aggregate_release_record(&[1; 32], &[2; 32], &[3; 32], &[4; 32], &[5; 32]);
+        assert_eq!(record.len(), AGGREGATE_RELEASE_DATA_LEN);
+        assert_eq!(record[0], 1);
+        assert_eq!(&record[1..33], &[1; 32]);
+        assert_eq!(&record[33..65], &[2; 32]);
+        assert_eq!(&record[65..97], &[3; 32]);
+        assert_eq!(&record[97..129], &[4; 32]);
+        assert_eq!(&record[129..161], &[5; 32]);
     }
 
     #[test]

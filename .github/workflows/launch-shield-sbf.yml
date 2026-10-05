@@ -1,0 +1,121 @@
+name: Launch Shield SBF candidate
+
+on:
+  push:
+    branches:
+      - agent/launch-shield-sbf-runner-20261004
+    paths:
+      - "launch-shield/program/**"
+      - "launch-shield/proof/relation/**"
+      - ".github/workflows/launch-shield-sbf.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "launch-shield/program/**"
+      - "launch-shield/proof/relation/**"
+      - ".github/workflows/launch-shield-sbf.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: launch-shield-sbf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and build SBF (no deployment)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.96.0
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup default 1.96.0
+          rustc --version
+          test "$(rustc --version | awk '{print $2}')" = "1.96.0"
+
+      - name: Run Launch Shield unit tests
+        run: cargo test --locked --manifest-path launch-shield/program/Cargo.toml
+
+      - name: Install Agave CLI 4.3.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -c "$(curl -sSfL https://release.anza.xyz/v4.3.0/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          cargo build-sbf --version
+
+      - name: Build SBF with platform-tools v1.57
+        run: |
+          cargo build-sbf \
+            --manifest-path launch-shield/program/Cargo.toml \
+            --sbf-out-dir "$RUNNER_TEMP/launch-shield-sbf" \
+            --arch v2 \
+            --tools-version v1.57 \
+            --patch-binaries-for-nix false
+
+      - name: Strip and record candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_elf="$RUNNER_TEMP/launch-shield-sbf/launch_shield_program.so"
+          if [[ ! -s "$source_elf" ]]; then
+            echo "::error::SBF ELF not found at $source_elf"
+            find "$RUNNER_TEMP/launch-shield-sbf" -maxdepth 4 -type f \
+              -printf '%p (%s bytes)\n' || true
+            exit 1
+          fi
+
+          llvm_strip="$(find "$HOME/.cache/solana" \
+            -name llvm-strip -print -quit 2>/dev/null || true)"
+
+          if [[ -z "$llvm_strip" || ! -x "$llvm_strip" ]]; then
+            echo "::error::llvm-strip not found or not executable; candidates:"
+            find "$HOME" -name llvm-strip -print 2>/dev/null | head -20 || true
+            exit 1
+          fi
+          echo "Using llvm-strip: $llvm_strip"
+
+          artifact_dir="$RUNNER_TEMP/launch-shield-artifact"
+          mkdir -p "$artifact_dir"
+          artifact="$artifact_dir/launch_shield_program.so"
+
+          cp "$source_elf" "$artifact"
+          "$llvm_strip" --strip-all "$artifact"
+
+          sha256="$(sha256sum "$artifact" | awk '{print $1}')"
+          size="$(wc -c < "$artifact" | tr -d '[:space:]')"
+
+          if [[ "$sha256" == "ab0e74f0e074f5c8c47b9898e0786a8fe091ad10497343f385dad3ce8bb01115" ]]; then
+            echo "Refusing to upload the previously deployed ELF." >&2
+            exit 1
+          fi
+
+          cat > "$artifact_dir/manifest.txt" <<EOF
+          commit=$GITHUB_SHA
+          ref=$GITHUB_REF
+          rustc=$(rustc --version)
+          agave_cli=4.3.0
+          platform_tools=v1.57
+          arch=v2
+          size_bytes=$size
+          sha256=$sha256
+          EOF
+
+          cat "$artifact_dir/manifest.txt"
+
+      - name: Upload candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-shield-sbf-${{ github.sha }}
+          path: ${{ runner.temp }}/launch-shield-artifact/
+          if-no-files-found: error
+          retention-days: 30

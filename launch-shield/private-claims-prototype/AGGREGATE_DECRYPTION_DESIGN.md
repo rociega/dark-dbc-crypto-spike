@@ -34,7 +34,8 @@ without giving one prover or trustee every bid opening. It does not authorize en
 - Pool state stores bid commitments, transfer-context hashes, and running
   low/high aggregate auditor ciphertexts. It does not retain each individual
   ciphertext. Finalization blocks later funding and validates the aggregates,
-  but does not yet bind a trustee roster, key epoch, or decryption transcript.
+  and the pool stores the registered trustee roster, key epoch, and verification
+  shares used by the proof statement.
 - The host-only masked-inversion and Feldman code is still a research model, not
   a distributed key ceremony. The no_std relation now verifies ordered 3-of-3
   inverse-key and aggregate-handle transforms with DLEQ proofs; it does not
@@ -75,7 +76,8 @@ need design and independent review.
 
 The prototype's account contract is fixed: `ConfigureTrustees` receives the
 pool, authority, then the three trustee-operator signer accounts in registry
-order; `Settle` appends those same three signers after its existing 19 accounts.
+order. `Settle` receives its base 19 accounts, then those three signers, a
+global aggregate-release registry PDA, and the system program.
 The key-setup proof binds the ordered operator Pubkeys and verification shares,
 and all three signers authorize the registration transaction. The aggregate
 proof binds the pool, auction, key epoch, and finalized bid set, preventing
@@ -83,14 +85,18 @@ replay into another pool's statement; all three signers must also authorize the
 pool-specific settlement transaction.
 
 This does not prevent trustees from colluding outside the program or decrypting
-individual ciphertexts. It also does not prevent differencing across separate
-settlements. Until an audited global release ledger or an authenticated
-disjoint-cohort mechanism exists, the operating policy is to authorize no more
-than one aggregate release for a given funding mint and ordered trustee
-verification-share set. Any additional release must be refused when participant
-overlap cannot be ruled out. The program does not enforce this cross-pool rule;
-the aggregate-proof gate therefore stays false until the enforcement mechanism
-and operational controls are implemented and validated.
+individual ciphertexts. It also does not prove that participants in separate
+pools are disjoint. The operating policy is to authorize no more than one
+aggregate release for a given funding mint and trustee-operator roster when
+participant overlap cannot be ruled out. The prototype now enforces a
+conservative version of this rule with a global PDA keyed by the funding mint
+and an order-independent hash of the three operator Pubkeys. The record is
+created atomically with settlement and binds the pool, finalized aggregate
+digest, and key epoch; changing the key epoch or signer order cannot create a
+second release. This can block unrelated pools that reuse the same mint and
+operator roster. It does not implement disjoint-cohort release budgets, and the
+aggregate-proof gate remains false pending independent review, adversarial
+testing, runtime validation, and operational controls.
 
 ### 2. Record each accepted transfer
 

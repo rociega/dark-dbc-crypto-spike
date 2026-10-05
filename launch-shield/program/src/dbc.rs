@@ -17,7 +17,9 @@ const INIT_SPL_NAME: &[u8] = b"global:initialize_virtual_pool_with_spl_token";
 const SWAP2_NAME: &[u8] = b"global:swap2";
 const SWAP_NAME: &[u8] = b"global:swap";
 const SWAP2_TRANSFER_HOOK_NAME: &[u8] = b"global:swap2_with_transfer_hook";
-const SWAP2_FIXED_ACCOUNT_COUNT: usize = 15;
+const SWAP2_ACCOUNT_COUNT: usize = 15;
+const INIT_SPL_ACCOUNT_COUNT: usize = 16;
+const TOKEN_METADATA_PROGRAM_ID: Pubkey = pubkey!("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 
 pub struct Swap2View {
     pub pool: Pubkey,
@@ -104,10 +106,6 @@ pub fn verify_settlement_layout(
         || swap.output != *expected_output
         || swap.payer != *creator
         || swap.has_referral
-        || !swap_ix
-            .accounts
-            .iter()
-            .any(|meta| meta.pubkey == solana_program::sysvar::instructions::id())
     {
         return Err(ShieldError::InvalidDbcInstruction.into());
     }
@@ -172,6 +170,7 @@ pub fn validate_finalize_predecessor(
         || swap.input != *input
         || swap.output != *output
         || swap.payer != *creator
+        || swap.has_referral
     {
         return Err(ShieldError::InvalidDbcInstruction.into());
     }
@@ -183,10 +182,30 @@ pub fn parse_swap2(ix: &Instruction) -> Result<Swap2View, ProgramError> {
         || ix.data.len() != 8 + 8 + 8 + 1
         || ix.data[..8] != discriminator(SWAP2_NAME)
         || ix.data[24] != 0
-        || ix.accounts.len() != SWAP2_FIXED_ACCOUNT_COUNT + 1
+        || ix.accounts.len() != SWAP2_ACCOUNT_COUNT
+        || ix.accounts[0].is_signer
+        || ix.accounts[0].is_writable
+        || ix.accounts[1].is_signer
+        || ix.accounts[1].is_writable
+        || (2..=6).any(|index| ix.accounts[index].is_signer || !ix.accounts[index].is_writable)
+        || ix.accounts[7].is_signer
+        || ix.accounts[7].is_writable
+        || ix.accounts[8].is_signer
+        || ix.accounts[8].is_writable
+        || !ix.accounts[9].is_signer
+        || !ix.accounts[9].is_writable
+        || ix.accounts[10].is_signer
+        || ix.accounts[10].is_writable
+        || ix.accounts[11].is_signer
+        || ix.accounts[11].is_writable
+        || (ix.accounts[12].pubkey == DBC_PROGRAM_ID
+            && (ix.accounts[12].is_signer || ix.accounts[12].is_writable))
         || ix.accounts[13].pubkey != swap2_event_authority()
+        || ix.accounts[13].is_signer
+        || ix.accounts[13].is_writable
         || ix.accounts[14].pubkey != DBC_PROGRAM_ID
-        || ix.accounts[15].pubkey != solana_program::sysvar::instructions::id()
+        || ix.accounts[14].is_signer
+        || ix.accounts[14].is_writable
     {
         return Err(ShieldError::InvalidDbcInstruction.into());
     }
@@ -237,16 +256,45 @@ pub fn verify_init_instruction(
     if ix.program_id != DBC_PROGRAM_ID
         || ix.data.len() < 8
         || ix.data[..8] != discriminator(INIT_SPL_NAME)
-        || ix.accounts.len() < 6
-        || ix.accounts[0].pubkey != *dbc_config
-        || ix.accounts[2].pubkey != *creator
-        || ix.accounts[3].pubkey != *base_mint
-        || ix.accounts[4].pubkey != *quote_mint
-        || ix.accounts[5].pubkey != pool_address(dbc_config, base_mint, quote_mint)
+        || ix.accounts.len() != INIT_SPL_ACCOUNT_COUNT
+        || !meta_matches(&ix.accounts[0], dbc_config, true, true)
+        || ix.accounts[1].is_signer
+        || ix.accounts[1].is_writable
+        || !meta_matches(&ix.accounts[2], creator, true, true)
+        || !meta_matches(&ix.accounts[3], base_mint, true, true)
+        || !meta_matches(&ix.accounts[4], quote_mint, false, false)
+        || !meta_matches(
+            &ix.accounts[5],
+            &pool_address(dbc_config, base_mint, quote_mint),
+            false,
+            true,
+        )
+        || (6..=8).any(|index| ix.accounts[index].is_signer || !ix.accounts[index].is_writable)
+        || !meta_matches(&ix.accounts[9], &TOKEN_METADATA_PROGRAM_ID, false, false)
+        || !meta_matches(&ix.accounts[10], creator, true, true)
+        || !meta_matches(&ix.accounts[11], &spl_token::id(), false, false)
+        || !meta_matches(&ix.accounts[12], &spl_token::id(), false, false)
+        || !meta_matches(
+            &ix.accounts[13],
+            &solana_program::system_program::id(),
+            false,
+            false,
+        )
+        || !meta_matches(&ix.accounts[14], &swap2_event_authority(), false, false)
+        || !meta_matches(&ix.accounts[15], &DBC_PROGRAM_ID, false, false)
     {
         return Err(ShieldError::InvalidDbcInstruction.into());
     }
     Ok(())
+}
+
+fn meta_matches(
+    meta: &solana_program::instruction::AccountMeta,
+    key: &Pubkey,
+    is_signer: bool,
+    is_writable: bool,
+) -> bool {
+    meta.pubkey == *key && meta.is_signer == is_signer && meta.is_writable == is_writable
 }
 
 fn verify_output_vault_creation(
@@ -352,15 +400,20 @@ mod tests {
 
     fn swap2_fixture() -> Instruction {
         let mut accounts: Vec<AccountMeta> = (0..12)
-            .map(|_| AccountMeta::new_readonly(Pubkey::new_unique(), false))
+            .map(|index| {
+                let key = Pubkey::new_unique();
+                if (2..=6).contains(&index) {
+                    AccountMeta::new(key, false)
+                } else if index == 9 {
+                    AccountMeta::new(key, true)
+                } else {
+                    AccountMeta::new_readonly(key, false)
+                }
+            })
             .collect();
         accounts.push(AccountMeta::new_readonly(DBC_PROGRAM_ID, false));
         accounts.push(AccountMeta::new_readonly(swap2_event_authority(), false));
         accounts.push(AccountMeta::new_readonly(DBC_PROGRAM_ID, false));
-        accounts.push(AccountMeta::new_readonly(
-            solana_program::sysvar::instructions::id(),
-            false,
-        ));
         let mut data = discriminator(SWAP2_NAME).to_vec();
         data.extend_from_slice(&777u64.to_le_bytes());
         data.extend_from_slice(&555u64.to_le_bytes());
@@ -369,6 +422,65 @@ mod tests {
             program_id: DBC_PROGRAM_ID,
             accounts,
             data,
+        }
+    }
+
+    fn decode_base58(encoded: &str) -> Vec<u8> {
+        const ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        let mut bytes = vec![0_u8];
+        for character in encoded.bytes() {
+            let value = ALPHABET
+                .iter()
+                .position(|candidate| *candidate == character)
+                .unwrap() as u32;
+            let mut carry = value;
+            for byte in bytes.iter_mut().rev() {
+                carry += u32::from(*byte) * 58;
+                *byte = carry as u8;
+                carry >>= 8;
+            }
+            while carry != 0 {
+                bytes.insert(0, carry as u8);
+                carry >>= 8;
+            }
+        }
+        let leading_zeroes = encoded.bytes().take_while(|byte| *byte == b'1').count();
+        let first_nonzero = bytes
+            .iter()
+            .position(|byte| *byte != 0)
+            .unwrap_or(bytes.len());
+        let mut decoded = vec![0; leading_zeroes];
+        decoded.extend_from_slice(&bytes[first_nonzero..]);
+        decoded
+    }
+
+    fn init_spl_fixture(
+        config: Pubkey,
+        creator: Pubkey,
+        base_mint: Pubkey,
+        quote_mint: Pubkey,
+    ) -> Instruction {
+        Instruction {
+            program_id: DBC_PROGRAM_ID,
+            accounts: vec![
+                AccountMeta::new(config, true),
+                AccountMeta::new_readonly(Pubkey::new_unique(), false),
+                AccountMeta::new(creator, true),
+                AccountMeta::new(base_mint, true),
+                AccountMeta::new_readonly(quote_mint, false),
+                AccountMeta::new(pool_address(&config, &base_mint, &quote_mint), false),
+                AccountMeta::new(Pubkey::new_unique(), false),
+                AccountMeta::new(Pubkey::new_unique(), false),
+                AccountMeta::new(Pubkey::new_unique(), false),
+                AccountMeta::new_readonly(TOKEN_METADATA_PROGRAM_ID, false),
+                AccountMeta::new(creator, true),
+                AccountMeta::new_readonly(spl_token::id(), false),
+                AccountMeta::new_readonly(spl_token::id(), false),
+                AccountMeta::new_readonly(solana_program::system_program::id(), false),
+                AccountMeta::new_readonly(swap2_event_authority(), false),
+                AccountMeta::new_readonly(DBC_PROGRAM_ID, false),
+            ],
+            data: discriminator(INIT_SPL_NAME).to_vec(),
         }
     }
 
@@ -449,18 +561,7 @@ mod tests {
         let creator = Pubkey::new_unique();
         let base_mint = Pubkey::new_unique();
         let quote_mint = Pubkey::new_unique();
-        let mut ix = Instruction {
-            program_id: DBC_PROGRAM_ID,
-            accounts: vec![
-                AccountMeta::new_readonly(config, false),
-                AccountMeta::new_readonly(Pubkey::new_unique(), false),
-                AccountMeta::new_readonly(creator, false),
-                AccountMeta::new_readonly(base_mint, false),
-                AccountMeta::new_readonly(quote_mint, false),
-                AccountMeta::new_readonly(pool_address(&config, &base_mint, &quote_mint), false),
-            ],
-            data: discriminator(INIT_SPL_NAME).to_vec(),
-        };
+        let ix = init_spl_fixture(config, creator, base_mint, quote_mint);
 
         verify_init_instruction(&ix, &config, &quote_mint, &base_mint, &creator).unwrap();
 
@@ -482,6 +583,14 @@ mod tests {
         wrong_pool.accounts[5].pubkey = Pubkey::new_unique();
         let mut missing_pool = ix.clone();
         missing_pool.accounts.truncate(5);
+        let mut missing_config_signature = ix.clone();
+        missing_config_signature.accounts[0].is_signer = false;
+        let mut wrong_metadata_program = ix.clone();
+        wrong_metadata_program.accounts[9].pubkey = Pubkey::new_unique();
+        let mut extra_account = ix.clone();
+        extra_account
+            .accounts
+            .push(AccountMeta::new_readonly(Pubkey::new_unique(), false));
 
         for invalid in [
             wrong_program,
@@ -493,16 +602,100 @@ mod tests {
             wrong_quote_mint,
             wrong_pool,
             missing_pool,
+            missing_config_signature,
+            wrong_metadata_program,
+            extra_account,
         ] {
             assert!(
                 verify_init_instruction(&invalid, &config, &quote_mint, &base_mint, &creator,)
                     .is_err()
             );
         }
+    }
 
-        ix.accounts
-            .push(AccountMeta::new_readonly(Pubkey::new_unique(), false));
+    #[test]
+    fn recorded_devnet_initializer_matches_the_deployed_account_layout() {
+        let config = solana_program::pubkey!("HhxjiR8GCW8eJt4jFwynM8UzJRyJerm6iJZHm6pbfzgF");
+        let creator = solana_program::pubkey!("9TSdP6z2bPuZhwnZg9kZptjhFs6SBL7NzehZ1LLVdLAU");
+        let base_mint = solana_program::pubkey!("29KUUA98TWEChS2eydAdYdje9fe4xWBEZ4XXbjuRCcCD");
+        let quote_mint = solana_program::pubkey!("UNXUeg9TcH1SeL9tFnZH2jAWeXTnAee3mA8LVqvSyk7");
+        let pool = solana_program::pubkey!("5octswXxT73dEQ8NqtBtSdgGer7Rzw5qYD3CnGm6gkuR");
+        let mut ix = init_spl_fixture(config, creator, base_mint, quote_mint);
+        ix.accounts[1].pubkey =
+            solana_program::pubkey!("FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM");
+        ix.accounts[5].pubkey = pool;
+        ix.accounts[6].pubkey =
+            solana_program::pubkey!("8NYHeAM4uZ5iHCVQjQuZJS8EyLxF3R79RJ3hXWx6teh1");
+        ix.accounts[7].pubkey =
+            solana_program::pubkey!("3JtW9Kn95PxBErhTKfSo8SVqEm5ZEPhreUPo7NpazzJX");
+        ix.accounts[8].pubkey =
+            solana_program::pubkey!("8TdRQ5RFyyJe4je7GVz7VJLT2MxZcdaUGZMrrB4CAWSV");
+        ix.data = decode_base58(
+            "9ZsUZxnhjYMgBrc5JvfDyA6UMCQcrky9iCLXZW3Nwze5wek2u5FUoeo5LF5UJsev2eAFAfQg7SNaLLRFoVzAQuUKnrap4LfNTGwvZoFr7VN4jzksVJYpiE3Sf1ZFqnerau6T9Kqoa9GPpzvznRN4hJ79CRiwHJq5JwmUeJD2mCbZRd6i7XuxsHYP69495GtHYs1oQ8bbhRq3sDDBzzvb",
+        );
+
+        assert_eq!(ix.data.len(), 155);
+        assert_eq!(ix.accounts.len(), INIT_SPL_ACCOUNT_COUNT);
+        assert_eq!(pool, pool_address(&config, &base_mint, &quote_mint));
         verify_init_instruction(&ix, &config, &quote_mint, &base_mint, &creator).unwrap();
+    }
+
+    #[test]
+    fn recorded_devnet_swap2_uses_fifteen_accounts_without_instructions_sysvar() {
+        let expected = [
+            "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM",
+            "HhxjiR8GCW8eJt4jFwynM8UzJRyJerm6iJZHm6pbfzgF",
+            "5octswXxT73dEQ8NqtBtSdgGer7Rzw5qYD3CnGm6gkuR",
+            "4m11TgZLXwQeeDY1oBNTnLVHedF35kNaqyNY3J6ygepd",
+            "BGEkWsngXdGDeYioRvMGdL5RA5aJKeHBkzPXbpdb21bx",
+            "8NYHeAM4uZ5iHCVQjQuZJS8EyLxF3R79RJ3hXWx6teh1",
+            "3JtW9Kn95PxBErhTKfSo8SVqEm5ZEPhreUPo7NpazzJX",
+            "29KUUA98TWEChS2eydAdYdje9fe4xWBEZ4XXbjuRCcCD",
+            "UNXUeg9TcH1SeL9tFnZH2jAWeXTnAee3mA8LVqvSyk7",
+            "9TSdP6z2bPuZhwnZg9kZptjhFs6SBL7NzehZ1LLVdLAU",
+            "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN",
+            "8Ks12pbrD6PXxfty1hVQiE9sc289zgU1zHkvXhrSdriF",
+            "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN",
+        ];
+        let writable = [2, 3, 4, 5, 6, 9];
+        let payer = solana_program::pubkey!("9TSdP6z2bPuZhwnZg9kZptjhFs6SBL7NzehZ1LLVdLAU");
+        let accounts = expected
+            .iter()
+            .enumerate()
+            .map(|(index, address)| {
+                let key = address.parse::<Pubkey>().unwrap();
+                if writable.contains(&index) {
+                    AccountMeta::new(key, index == 9)
+                } else {
+                    AccountMeta::new_readonly(key, index == 9)
+                }
+            })
+            .collect();
+        let ix = Instruction {
+            program_id: DBC_PROGRAM_ID,
+            accounts,
+            data: decode_base58("TGq5We4UqkvENK8uuXBSpTupJJeXgo7Vbm"),
+        };
+
+        let view = parse_swap2(&ix).unwrap();
+        assert_eq!(
+            view.pool,
+            pool_address(
+                &ix.accounts[1].pubkey,
+                &ix.accounts[7].pubkey,
+                &ix.accounts[8].pubkey
+            )
+        );
+        assert_eq!(view.payer, payer);
+        assert_eq!(view.quote_amount, 494_709_471);
+        assert_eq!(view.min_output, 4_852_918);
+        assert!(!view.has_referral);
+        assert!(!ix
+            .accounts
+            .iter()
+            .any(|meta| meta.pubkey == solana_program::sysvar::instructions::id()));
     }
 
     #[test]
@@ -531,13 +724,13 @@ mod tests {
     }
 
     #[test]
-    fn swap2_requires_anchor_event_accounts_and_only_the_instructions_sysvar() {
+    fn swap2_requires_the_observed_anchor_event_accounts_and_account_count() {
         let ix = swap2_fixture();
         assert!(!parse_swap2(&ix).unwrap().has_referral);
 
-        let mut missing_sysvar = swap2_fixture();
-        missing_sysvar.accounts.pop();
-        assert!(parse_swap2(&missing_sysvar).is_err());
+        let mut missing_account = swap2_fixture();
+        missing_account.accounts.pop();
+        assert!(parse_swap2(&missing_account).is_err());
 
         let mut wrong_event_authority = swap2_fixture();
         wrong_event_authority.accounts[13].pubkey = Pubkey::new_unique();
@@ -547,9 +740,13 @@ mod tests {
         wrong_program.accounts[14].pubkey = Pubkey::new_unique();
         assert!(parse_swap2(&wrong_program).is_err());
 
-        let mut wrong_instructions_sysvar = swap2_fixture();
-        wrong_instructions_sysvar.accounts[15].pubkey = Pubkey::new_unique();
-        assert!(parse_swap2(&wrong_instructions_sysvar).is_err());
+        let mut unsigned_payer = swap2_fixture();
+        unsigned_payer.accounts[9].is_signer = false;
+        assert!(parse_swap2(&unsigned_payer).is_err());
+
+        let mut readonly_pool = swap2_fixture();
+        readonly_pool.accounts[2].is_writable = false;
+        assert!(parse_swap2(&readonly_pool).is_err());
 
         let mut extra_account = swap2_fixture();
         extra_account
@@ -607,18 +804,7 @@ mod tests {
         let dbc_base_vault = Pubkey::new_unique();
         let dbc_quote_vault = Pubkey::new_unique();
 
-        let init_ix = Instruction {
-            program_id: DBC_PROGRAM_ID,
-            accounts: vec![
-                AccountMeta::new_readonly(config, false),
-                AccountMeta::new_readonly(Pubkey::new_unique(), false),
-                AccountMeta::new_readonly(creator, false),
-                AccountMeta::new_readonly(base_mint, false),
-                AccountMeta::new_readonly(quote_mint, false),
-                AccountMeta::new_readonly(pool, false),
-            ],
-            data: discriminator(INIT_SPL_NAME).to_vec(),
-        };
+        let init_ix = init_spl_fixture(config, creator, base_mint, quote_mint);
         let create_vault_ix = Instruction {
             program_id: ASSOCIATED_TOKEN_PROGRAM_ID,
             accounts: vec![
