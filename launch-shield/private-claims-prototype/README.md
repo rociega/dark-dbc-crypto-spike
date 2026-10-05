@@ -156,12 +156,17 @@ The `Settle` code reconstructs the aggregate statement from the frozen bid set,
 verifies the SP1 proof, withdraws the proven bid total, and calls DBC `swap2`
 with the Token-2022 funding mint as quote and the classic SPL output mint as
 base. The caller must provide an existing DBC pool and Token-2022 withdrawal
-proof contexts. The original 19 accounts are followed by the three matching
-trustee-operator signer accounts. The DBC CPI and withdrawal are atomic; the
-instruction records the actual output token balance delta, and claim
-registration stays blocked until settlement succeeds. The compile-time
-aggregate-proof gate is currently false, so this path is disabled and has not
-been runtime-tested.
+proof contexts. The 19 base accounts are followed by the three matching
+trustee-operator signers, a global aggregate-release registry PDA, and the
+system program (24 accounts total). The registry is keyed by funding mint and
+an order-independent hash of the trustee-operator roster. It permits one
+aggregate release for that mint and roster across pools and key epochs, records
+the pool and finalized aggregate digest, and is created atomically with
+settlement. This intentionally blocks unrelated pools that reuse the same mint
+and roster. The DBC CPI and withdrawal are atomic; the instruction records the
+actual output token balance delta, and claim registration stays blocked until
+settlement succeeds. The compile-time aggregate-proof gate is currently false,
+so this path is disabled and has not been runtime-tested.
 Auction IDs are derived as
 `SHA256("private-claims:auction-id:test-v1" || program_id || authority ||
 nonce)`. The program uses the shared SP1 guest hash in
@@ -367,12 +372,12 @@ verified, and the aggregate-proof gate remains fail-closed.
   requires the same three signers for each settlement. This is transaction-level
   authorization only; it does not authenticate real-world identities or prove
   that a signer exclusively controls or safely stores its factor.
-- Prevent cross-pool aggregate differencing. The current signer checks authorize
-  each pool's settlement but do not track releases globally. Until an audited
-  global release ledger or authenticated disjoint-cohort proof exists, operators
-  must refuse additional releases for the same funding mint and trustee-share
-  set whenever participant overlap is unknown; this policy is not yet enforced
-  on chain.
+- The program now prevents a second aggregate release for the same funding mint
+  and trustee-operator roster across pools and key epochs. This is deliberately
+  stricter than a disjoint-cohort ledger, and it does not prove disjoint
+  participants across different rosters or program deployments. Independently
+  review the guard and define an operational policy for those cases before
+  enabling the settlement path.
 - Confirm the DBC CPI account layout and Token-2022 pool support against the
   exact pinned deployment, and validate settlement in a Solana runtime.
 - Test CPI and verifier failures, replay attempts, and settlement boundaries.
