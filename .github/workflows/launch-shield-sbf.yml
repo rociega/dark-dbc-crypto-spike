@@ -74,9 +74,8 @@ jobs:
             exit 1
           fi
 
-          llvm_strip="$(find "$HOME" \
-            -path "*/platform-tools/llvm/bin/llvm-strip" \
-            -print -quit 2>/dev/null || true)"
+          llvm_strip="$(find "$HOME/.cache/solana" \
+            -name llvm-strip -print -quit 2>/dev/null || true)"
 
           if [[ -z "$llvm_strip" || ! -x "$llvm_strip" ]]; then
             echo "::error::llvm-strip not found or not executable; candidates:"
