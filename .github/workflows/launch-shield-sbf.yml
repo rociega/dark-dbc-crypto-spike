@@ -67,13 +67,23 @@ jobs:
           set -euo pipefail
 
           source_elf="$RUNNER_TEMP/launch-shield-sbf/launch_shield_program.so"
-          test -s "$source_elf"
+          if [[ ! -s "$source_elf" ]]; then
+            echo "::error::SBF ELF not found at $source_elf"
+            find "$RUNNER_TEMP/launch-shield-sbf" -maxdepth 4 -type f \
+              -printf '%p (%s bytes)\n' || true
+            exit 1
+          fi
 
-          llvm_strip="$(find "$HOME/.cache/solana" \
+          llvm_strip="$(find "$HOME" \
             -path "*/platform-tools/llvm/bin/llvm-strip" \
-            -print -quit)"
-          test -n "$llvm_strip"
-          test -x "$llvm_strip"
+            -print -quit 2>/dev/null || true)"
+
+          if [[ -z "$llvm_strip" || ! -x "$llvm_strip" ]]; then
+            echo "::error::llvm-strip not found or not executable; candidates:"
+            find "$HOME" -name llvm-strip -print 2>/dev/null | head -20 || true
+            exit 1
+          fi
+          echo "Using llvm-strip: $llvm_strip"
 
           artifact_dir="$RUNNER_TEMP/launch-shield-artifact"
           mkdir -p "$artifact_dir"
